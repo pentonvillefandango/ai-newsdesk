@@ -26,6 +26,7 @@ USER 10001
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"]
-# Known limitation: "*" trusts X-Forwarded-For from any container on the shared proxy network (same class as research-engine ADR-0026).
+# --no-proxy-headers: any container on the shared proxy network could forge X-Forwarded-*, so the
+# app never trusts them (the login limiter is global; redirects are relative; cookies are Secure).
 CMD ["uvicorn", "ai_newsdesk.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", \
-     "--proxy-headers", "--forwarded-allow-ips", "*", "--timeout-graceful-shutdown", "5"]
+     "--no-proxy-headers", "--timeout-graceful-shutdown", "5"]

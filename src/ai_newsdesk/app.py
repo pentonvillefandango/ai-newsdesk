@@ -168,6 +168,9 @@ def create_app(
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        # A trailing-slash redirect would be absolute and built from the request scheme, which
+        # is plain http behind Caddy now that forwarded headers are not trusted: 404 instead.
+        redirect_slashes=False,
     )
 
     async def rebuild_context() -> None:

@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from ai_newsdesk.models import (
+    Category,
     ItemStatus,
     Purpose,
     SourceKind,
@@ -169,3 +170,45 @@ async def test_usage_last_days(store: Store) -> None:
     assert stats.review_usd == pytest.approx(0.02)
     assert stats.write_usd == pytest.approx(0.01)
     assert stats.briefing_usd == pytest.approx(0.005)
+
+
+async def _failed_story(store: Store, src: int) -> tuple[int, int]:
+    """A story whose only item failed review (shown, never hidden)."""
+    item = await seed.add_item(
+        store,
+        source_id=src,
+        url="https://lab.example/failed-in-story",
+        title="Failed in a story",
+        at=NOW,
+        status=ItemStatus.REVIEW_FAILED,
+    )
+    story = await store.create_story("Failed in a story", Category.OTHER, NOW)
+    await store.attach_item(item, story, NOW)
+    await store.recompute_story_score(story)
+    return item, story
+
+
+async def test_unscored_items_leave_out_items_already_in_a_story(store: Store) -> None:
+    src = await seed.add_source(store, name="Lab")
+    loose = await seed.add_item(
+        store,
+        source_id=src,
+        url="https://lab.example/loose",
+        title="Loose",
+        at=NOW,
+        status=ItemStatus.REVIEW_FAILED,
+    )
+    await _failed_story(store, src)
+    assert [u.item_id for u in await store.unscored_items(NOW)] == [loose]
+
+
+async def test_stories_say_whether_any_item_was_scored(store: Store) -> None:
+    src = await seed.add_source(store, name="Lab")
+    _, failed = await _failed_story(store, src)
+    reviewed = await seed.add_story(
+        store, at=NOW, headline="Lab ships", sources=[(src, "https://lab.example/ok", "Lab ships")]
+    )
+    today = {s.id: s for s in await store.today_stories(NOW, 4)}
+    assert (today[failed].scored, today[reviewed].scored) == (False, True)
+    by_id = await store.stories_by_ids([failed, reviewed])
+    assert (by_id[failed].scored, by_id[reviewed].scored) == (False, True)

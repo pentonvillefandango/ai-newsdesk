@@ -22,10 +22,9 @@ from ai_newsdesk.web.deps import NO_STORE, templates
 
 router = APIRouter(include_in_schema=False)
 
-
-def _client_ip(request: Request) -> str:
-    # Behind Caddy, uvicorn --proxy-headers has already put the forwarded client address here.
-    return request.client.host if request.client else "unknown"
+# One owner, so one failure bucket for every client: a guesser gains nothing by changing (or
+# faking) its address. uvicorn runs with --no-proxy-headers, so client addresses are not trusted.
+LOGIN_BUCKET = "all-clients"
 
 
 def _login_page(
@@ -66,7 +65,7 @@ async def login(
     if not stored_hash:
         return _login_page(request, target, None, 403)
     limiter: LoginRateLimiter = request.app.state.login_limiter
-    client = _client_ip(request)
+    client = LOGIN_BUCKET
     if limiter.blocked(client):
         wait_s = limiter.retry_after(client)
         minutes = max(1, math.ceil(wait_s / 60))

@@ -152,6 +152,7 @@ class Story(BaseModel):  # what the web layer renders
     last_updated_at: datetime
     feedback: int  # -1, 0, 1
     sources: list["StorySource"] = Field(default_factory=list)
+    scored: bool = True  # False when no item in the story has a verdict yet ("Unscored")
 
 
 class StorySource(BaseModel):

@@ -57,7 +57,7 @@ def test_git_sha_arg_reaches_env() -> None:
     assert any(ln.startswith("ENV") and "GIT_SHA=${GIT_SHA}" in ln for ln in final)
 
 
-def test_cmd_runs_uvicorn_factory_behind_proxy() -> None:
+def test_cmd_runs_uvicorn_factory_without_trusting_forwarded_headers() -> None:
     cmd = [ln for ln in _final_stage(_directives()) if ln.startswith("CMD")]
     assert len(cmd) == 1
     for part in (
@@ -66,10 +66,12 @@ def test_cmd_runs_uvicorn_factory_behind_proxy() -> None:
         '"--factory"',
         '"--host", "0.0.0.0"',
         '"--port", "8000"',
-        '"--proxy-headers"',
-        '"--forwarded-allow-ips", "*"',
+        '"--no-proxy-headers"',
     ):
         assert part in cmd[0], part
+    # Any container on the shared proxy network could forge X-Forwarded-*: never trust them.
+    assert '"--proxy-headers"' not in cmd[0]
+    assert "--forwarded-allow-ips" not in cmd[0]
 
 
 def test_no_unsafe_directives() -> None:

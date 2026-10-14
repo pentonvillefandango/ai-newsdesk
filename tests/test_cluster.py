@@ -176,3 +176,21 @@ async def test_attach_keeps_an_already_attached_item_in_its_story(store: Store) 
     assert [src.item_id for src in stories[shown].sources] == [i1]
     assert stories[shown].score == 2.0
     assert [src.item_id for src in stories[other].sources] == [i2]
+
+
+async def test_attach_skips_an_item_deleted_mid_run(store: Store) -> None:
+    lab = await add_source(store, "Lab blog")
+    gone = await add_source(store, "Doomed blog")
+    kept = await add_item(store, lab.id, "Gemini 4 arrives", "https://example.com/g", NOW)
+    lost = await add_item(store, gone.id, "Mystery lab teases agent", "https://example.com/m", NOW)
+    await store.delete_source(gone.id)
+    v = Verdict(item_id=kept, signal=7, junk=False, category=Category.MODEL_RELEASE)
+    await store.save_verdict(v, 7)
+    judged = [
+        Judged(review_input(lost, "Mystery lab teases agent"), None, None),
+        Judged(review_input(kept, "Gemini 4 arrives"), v, 7),
+    ]
+    touched = await attach(store, judged, {}, show_threshold=4, at=NOW)
+    stories = await store.today_stories(NOW, 4)
+    assert [s.headline for s in stories] == ["Gemini 4 arrives"]
+    assert touched == [stories[0].id]

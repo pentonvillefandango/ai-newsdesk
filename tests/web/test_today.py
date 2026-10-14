@@ -377,3 +377,29 @@ def test_non_http_source_urls_render_as_plain_text(app: FastAPI, client: TestCli
     assert "javascript:" not in text
     assert "Script Source" in text and "Relative Source" in text
     assert "Odd links" in text and "JS post" in text and "Unscored js" in text
+
+
+def test_story_with_only_a_failed_item_is_unscored_and_listed_once(
+    app: FastAPI, client: TestClient
+) -> None:
+    store = app.state.store
+    src = _source(client, app)
+    item = run(
+        client,
+        seed.add_item,
+        store,
+        source_id=src,
+        url="https://lab.example/f",
+        title="Failed review item",
+        at=AT,
+        status=ItemStatus.REVIEW_FAILED,
+    )
+    sid = run(client, store.create_story, "Failed review item", Category.OTHER, AT)
+    run(client, store.attach_item, item, sid, AT)
+    run(client, store.recompute_story_score, sid)
+    r = client.get("/")
+    card = r.text.split(f'id="story-{sid}"', 1)[1].split("</article>", 1)[0]
+    assert '<span class="badge badge--unscored">Unscored</span>' in card
+    assert "Signal 0" not in r.text
+    assert "Waiting for review" not in r.text  # not listed a second time
+    assert r.text.count("Failed review item</a>") == 1
