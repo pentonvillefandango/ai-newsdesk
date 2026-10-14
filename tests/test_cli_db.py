@@ -46,7 +46,12 @@ def test_db_backup_copies_the_live_database(
     code = cli.main(["db", "backup", "--out", str(out)])
     line = _last_json(capsys.readouterr().out)
     assert code == 0, line
-    assert line == {"bytes": out.stat().st_size, "command": "db backup", "ok": True, "path": str(out)}
+    assert line == {
+        "bytes": out.stat().st_size,
+        "command": "db backup",
+        "ok": True,
+        "path": str(out),
+    }
     with sqlite3.connect(out) as conn:
         assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -59,7 +64,11 @@ def test_db_backup_refuses_a_missing_database(
     out = tmp_path / "copy.sqlite"
     code = cli.main(["db", "backup", "--out", str(out)])
     line = _last_json(capsys.readouterr().out)
-    assert code == 1 and line == {"command": "db backup", "error": "database not found", "ok": False}
+    assert code == 1 and line == {
+        "command": "db backup",
+        "error": "database not found",
+        "ok": False,
+    }
     assert not db_path.exists(), "a backup must never create an empty live database"
     assert not out.exists()
 

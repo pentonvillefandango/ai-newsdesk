@@ -54,7 +54,7 @@ def cmd_backup(args: argparse.Namespace) -> int:
         asyncio.run(_backup(src, out))
         if not _integrity_ok(out):
             raise ValueError("integrity check failed")
-    except Exception as exc:  # noqa: BLE001 - one JSON line, never a traceback
+    except Exception as exc:
         out.unlink(missing_ok=True)
         _emit(ok=False, error=f"{type(exc).__name__}: {exc}")
         return 1

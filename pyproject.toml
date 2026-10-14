@@ -64,7 +64,8 @@ extend-exclude = ["docs"]
 select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "S", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106"]
+"tests/**" = ["S101", "S105", "S106", "S603", "S607"]
+"ops/smoke_probe.py" = ["S310"]
 
 [tool.pyright]
 pythonVersion = "3.12"
