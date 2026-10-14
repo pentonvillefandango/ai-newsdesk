@@ -116,6 +116,8 @@
             {{ error("briefing_model") }}
           </div>
         </div>
+        {# Choices made elsewhere (Compare, later the provider rows) are checked on save too. #}
+        {% for name in ("writer_provider", "briefing_provider", "consolidator_provider", "consolidator_model") %}{{ error(name) }}{% endfor %}
       </div>
     </section>
 

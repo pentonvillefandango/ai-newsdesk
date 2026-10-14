@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-import anthropic
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, Response
@@ -23,15 +22,22 @@ from ai_newsdesk.config import Settings
 from ai_newsdesk.consolidate import LLMConsolidator
 from ai_newsdesk.judges.jev import JevJudge
 from ai_newsdesk.judges.llm import LLMJudge
-from ai_newsdesk.llm.anthropic_client import AnthropicClient
+from ai_newsdesk.llm.anthropic_client import AnthropicClient, Effort
+from ai_newsdesk.llm.base import ModelClient
 from ai_newsdesk.llm.catalogue import CatalogueFetch, ModelCatalogue, http_fetcher
+from ai_newsdesk.llm.factory import SdkPool, UnusableModelError, make_client
 from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.normalise import canonical_url
 from ai_newsdesk.pipeline import PipelineContext
 from ai_newsdesk.pricing import Pricing
 from ai_newsdesk.protocols import Clock, Judge
 from ai_newsdesk.research_engine import HttpResearchEngine
-from ai_newsdesk.runtime_settings import ApiKeys, load_runtime_settings
+from ai_newsdesk.runtime_settings import (
+    DEFAULT_MODEL,
+    ApiKeyName,
+    ApiKeys,
+    load_runtime_settings,
+)
 from ai_newsdesk.scheduler import NightlyFn, Scheduler
 from ai_newsdesk.sources.registry import build_sources
 from ai_newsdesk.store import Store
@@ -42,6 +48,7 @@ from ai_newsdesk.web.security import install_security
 from ai_newsdesk.writer import LLMWriter
 
 log = logging.getLogger("ai_newsdesk.app")
+MODEL_PROVIDERS: tuple[ApiKeyName, ...] = ("anthropic", "openai", "openrouter")
 
 
 @dataclass
@@ -60,7 +67,8 @@ CtxFactory = Callable[[AppDeps], Awaitable[PipelineContext]]
 
 
 async def build_context(deps: AppDeps) -> PipelineContext:
-    """Real wiring (master plan R8). Called at start-up and after any settings or key change."""
+    """Real wiring (master plan R8). Called at start-up, after any settings or key change and
+    after a model-list refresh. Each AI job gets its own ModelClient (multi-provider 3.4)."""
     settings, store, keys = deps.settings, deps.store, deps.api_keys
     runtime = await load_runtime_settings(store)
     # The provider is async and read per request, so a key saved in the UI applies at once (R3).
@@ -69,10 +77,41 @@ async def build_context(deps: AppDeps) -> PipelineContext:
         lambda: keys.resolve_api_key("research_engine"),
         client=deps.http,
     )
-    # An empty key still builds a client; calls then fail with 401 and items stay unscored.
-    client = anthropic.AsyncAnthropic(
-        api_key=(await keys.resolve_api_key("anthropic")) or "not-set"
-    )
+    sdks = SdkPool({name: await keys.resolve_api_key(name) for name in MODEL_PROVIDERS})
+    catalogue = deps.catalogue.current
+
+    def job_client(
+        job: str, provider: str, model: str, *, effort: Effort = "low", cache_system: bool = True
+    ) -> ModelClient:
+        """The chosen client, or Claude Haiku when the choice is unusable: start-up never
+        fails over a model setting. The logged reason is ours and never holds a key."""
+        try:
+            return make_client(
+                provider,
+                model,
+                sdks=sdks,
+                pricebook=deps.prices,
+                catalogue=catalogue,
+                effort=effort,
+                cache_system=cache_system,
+            )
+        except UnusableModelError as exc:
+            log.warning(
+                "%s model %s:%s is unusable (%s); using %s instead",
+                job,
+                provider,
+                model,
+                exc,
+                DEFAULT_MODEL,
+            )
+            return AnthropicClient(
+                sdks.anthropic(),
+                DEFAULT_MODEL,
+                deps.prices,
+                effort=effort,
+                cache_system=cache_system,
+            )
+
     judge: Judge
     if runtime.judge_provider == "typesafe":
         # judges.jev imports without the optional `jev` extra; the SDK is loaded only on use.
@@ -80,41 +119,51 @@ async def build_context(deps: AppDeps) -> PipelineContext:
             await keys.resolve_api_key("typesafe"), deps.pricing, model=runtime.judge_model
         )
     else:
-        judge = LLMJudge(AnthropicClient(client, runtime.judge_model, deps.prices))
+        judge = LLMJudge(job_client("judge", runtime.judge_provider, runtime.judge_model))
     return PipelineContext(
         store=store,
         sources=build_sources(deps.http, research, deps.clock),
         research_engine=research,
         judge=judge,
         writer=LLMWriter(
-            AnthropicClient(client, runtime.writer_model, deps.prices),
-            AnthropicClient(client, runtime.briefing_model, deps.prices, effort="medium"),
+            job_client("writer", runtime.writer_provider, runtime.writer_model),
+            job_client(
+                "briefing", runtime.briefing_provider, runtime.briefing_model, effort="medium"
+            ),
         ),
         budget=Budget(store, deps.pricing, deps.clock, runtime, tz=settings.tz, prices=deps.prices),
         clock=deps.clock,
         settings=settings,
-        # The judge model when the judge is Claude; Jev models cannot take this call.
+        # A one-off call a run: no cached system block.
         consolidator=LLMConsolidator(
-            AnthropicClient(
-                client,
-                runtime.judge_model
-                if runtime.judge_provider == "anthropic"
-                else runtime.writer_model,
-                deps.prices,
+            job_client(
+                "consolidator",
+                runtime.consolidator_provider,
+                runtime.consolidator_model,
                 cache_system=False,
             )
         ),
     )
 
 
+Rebuild = Callable[[], Awaitable[None]]
+
+
 def refresh_in_background(
-    catalogue: ModelCatalogue, background: set[asyncio.Task[None]]
+    catalogue: ModelCatalogue, background: set[asyncio.Task[None]], then: Rebuild | None = None
 ) -> asyncio.Task[None]:
     """Refresh the catalogue without blocking the caller (or holding the pipeline lock).
-    refresh() never raises: a failure is logged and the last good copy is kept."""
+    refresh() never raises: a failure is logged and the last good copy is kept. After a
+    successful refresh `then` runs (the context rebuild), so a job whose model could not be
+    priced before the list arrived gets its real client."""
 
     async def refresh() -> None:
-        await catalogue.refresh()
+        if not await catalogue.refresh() or then is None:
+            return
+        try:
+            await then()
+        except Exception:  # the old context keeps working
+            log.exception("rebuilding the context after the model-list refresh failed")
 
     task = asyncio.create_task(refresh(), name="catalogue-refresh")
     background.add(task)
@@ -122,7 +171,9 @@ def refresh_in_background(
     return task
 
 
-def nightly_jobs(catalogue: ModelCatalogue, background: set[asyncio.Task[None]]) -> NightlyFn:
+def nightly_jobs(
+    catalogue: ModelCatalogue, background: set[asyncio.Task[None]], then: Rebuild | None = None
+) -> NightlyFn:
     """The nightly chain: the taste refit, then a background catalogue refresh, even when the
     refit fails. The fetch runs outside the scheduler lock, so it never delays a run."""
 
@@ -130,7 +181,7 @@ def nightly_jobs(catalogue: ModelCatalogue, background: set[asyncio.Task[None]])
         try:
             await taste.nightly(ctx)
         finally:
-            refresh_in_background(catalogue, background)
+            refresh_in_background(catalogue, background, then)
 
     return run
 
@@ -202,13 +253,15 @@ def create_app(
                 else default_key_testers(settings, http)
             )
             # Always built, so Refresh now can use run_now() even with the schedule switched off.
-            if catalogue.is_stale():
-                refresh_in_background(catalogue, background)  # never blocks start-up
-            scheduler = Scheduler(app.state.ctx, nightly_fn=nightly_jobs(catalogue, background))
+            scheduler = Scheduler(
+                app.state.ctx, nightly_fn=nightly_jobs(catalogue, background, rebuild_context)
+            )
             if settings.scheduler_enabled:
                 scheduler.start()
             app.state.scheduler = scheduler
             app.state.run_lock = scheduler.lock
+            if catalogue.is_stale():  # never blocks start-up
+                refresh_in_background(catalogue, background, rebuild_context)
             log.info(
                 "ai-newsdesk started (scheduler %s)", "on" if settings.scheduler_enabled else "off"
             )

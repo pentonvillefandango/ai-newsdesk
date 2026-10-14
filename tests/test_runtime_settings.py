@@ -33,6 +33,10 @@ def test_defaults_match_contract() -> None:
         "judge_model": "claude-haiku-5-5",
         "writer_model": "claude-haiku-5-5",
         "briefing_model": "claude-haiku-5-5",
+        "writer_provider": "anthropic",
+        "briefing_provider": "anthropic",
+        "consolidator_provider": "anthropic",
+        "consolidator_model": "claude-haiku-5-5",
         "show_threshold": 4,
         "why_it_matters": True,
         "hn_min_points": 100,
@@ -51,7 +55,11 @@ def test_defaults_match_contract() -> None:
         {"monthly_budget_usd": float("nan")},
         {"monthly_budget_usd": "inf"},
         {"monthly_budget_usd": 1000.01},
-        {"judge_provider": "openai"},
+        {"judge_provider": "mistral"},
+        {"writer_provider": "typesafe"},
+        {"briefing_provider": "google"},
+        {"consolidator_provider": "typesafe"},
+        {"consolidator_model": ""},
         {"judge_model": ""},
         {"show_threshold": 11},
         {"hn_min_points": -5},
@@ -74,6 +82,38 @@ async def test_load_defaults_save_roundtrip(store: Store) -> None:
     await save_runtime_settings(store, changed)
     assert await load_runtime_settings(store) == changed
     assert await store.get_setting("runs_per_day") == 6
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "typesafe", "openai", "openrouter"])
+def test_judge_provider_choices(provider: str) -> None:
+    assert RuntimeSettings(judge_provider=provider).judge_provider == provider  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("field", ["writer_provider", "briefing_provider", "consolidator_provider"])
+@pytest.mark.parametrize("provider", ["anthropic", "openai", "openrouter"])
+def test_job_provider_choices(field: str, provider: str) -> None:
+    assert getattr(RuntimeSettings.model_validate({field: provider}), field) == provider
+
+
+async def test_settings_stored_before_the_provider_fields_still_load(store: Store) -> None:
+    """A database saved by the single-provider version has none of the new keys."""
+    old = {
+        "runs_per_day": 6,
+        "judge_provider": "typesafe",
+        "judge_model": "jev-1.13.0",
+        "writer_model": "claude-sonnet-5-5",
+        "briefing_model": "claude-opus-5-5",
+    }
+    for key, value in old.items():
+        await store.set_setting(key, value)
+    rs = await load_runtime_settings(store)
+    assert rs.model_dump(include=set(old)) == old
+    assert (rs.writer_provider, rs.briefing_provider, rs.consolidator_provider) == (
+        "anthropic",
+        "anthropic",
+        "anthropic",
+    )
+    assert rs.consolidator_model == "claude-haiku-5-5"
 
 
 async def test_invalid_stored_value_falls_back(
@@ -101,6 +141,7 @@ async def test_resolve_order_ui_then_env_then_empty(
     keys = ApiKeys(store, settings_factory(anthropic_api_key=ENV_KEY))
     assert await keys.resolve_api_key("anthropic") == ENV_KEY
     assert await keys.resolve_api_key("typesafe") == ""
+    assert await keys.resolve_api_key("openai") == ""
     await keys.set_api_key("anthropic", f"  {UI_KEY}  ", NOW)
     assert await keys.resolve_api_key("anthropic") == UI_KEY
     status = await keys.api_key_status("anthropic")
@@ -117,7 +158,7 @@ async def test_bad_input_refused(store: Store, settings_factory: SettingsFactory
     with pytest.raises(ValueError, match="empty"):
         await keys.set_api_key("anthropic", "   ", NOW)
     with pytest.raises(ValueError, match="unknown API key"):
-        await keys.resolve_api_key("openai")  # type: ignore[arg-type]
+        await keys.resolve_api_key("google")  # type: ignore[arg-type]
 
 
 async def test_secret_never_leaks(
@@ -149,3 +190,17 @@ async def test_rotated_secrets_key_falls_back_to_env(
         assert await rotated.resolve_api_key("anthropic") == ENV_KEY
     assert "could not be decrypted" in caplog.text
     assert UI_KEY not in caplog.text
+
+
+async def test_openai_and_openrouter_keys_fall_back_to_env(
+    store: Store, settings_factory: SettingsFactory
+) -> None:
+    keys = ApiKeys(
+        store, settings_factory(openai_api_key=ENV_KEY, openrouter_api_key="sk-or-" + "o" * 40)
+    )
+    assert await keys.resolve_api_key("openai") == ENV_KEY
+    assert await keys.resolve_api_key("openrouter") == "sk-or-" + "o" * 40
+    await keys.set_api_key("openrouter", UI_KEY, NOW)
+    assert await keys.resolve_api_key("openrouter") == UI_KEY
+    status = await keys.api_key_status("openai")
+    assert (status.set_in_ui, status.set_in_env) == (False, True)

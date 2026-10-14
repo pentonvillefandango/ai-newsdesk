@@ -99,6 +99,7 @@ Recovery: an interrupted deploy leaves `current` on the new commit with no log e
 - Anthropic and TypeSafe prices come from `config/pricing.yaml`. OpenRouter prices (and OpenAI prices not listed in `pricing.yaml`) come from OpenRouter's public model list (`https://openrouter.ai/api/v1/models`, no key), filtered to priced models with structured output and stored in the `settings` table as `model_catalogue`.
 - The list is refreshed at start-up when it is older than 24 hours (in the background) and nightly after 03:30. A failed fetch is logged (`model catalogue refresh failed`) and the last good copy is kept; with no copy at all, only `pricing.yaml` models are usable.
 - Spend from OpenRouter is recorded at the cost OpenRouter reports for each call.
+- Each AI job (judge, summary writer, briefing writer, duplicate-merger) has its own provider and model. A saved choice that can't be used at start-up (its price is unknown, or its OpenAI or OpenRouter key is missing) never stops the app: that job uses Claude Haiku and the log says `<job> model <provider>:<model> is unusable (<reason>)`. After each successful list refresh the jobs are rebuilt, so a model that was waiting for the list is picked up.
 
 ## Known limitations
 
@@ -117,7 +118,7 @@ sed -i "s/^SESSION_SECRET=.*/SESSION_SECRET=$(openssl rand -hex 32)/" .env && ma
 
 - `SESSION_SECRET`: everyone is logged out.
 - `SECRETS_KEY`: it encrypts the API keys saved on the Settings page. After rotating it those saved keys can't be decrypted: the app falls back to the `.env` keys, and you re-enter the keys on the Settings page.
-- API keys (`ANTHROPIC_API_KEY`, `RESEARCH_ENGINE_API_KEY`, `TYPESAFE_API_KEY`): change them in `.env` and `make deploy`, or save them on the Settings page (a saved key wins over `.env`).
+- API keys (`ANTHROPIC_API_KEY`, `RESEARCH_ENGINE_API_KEY`, `TYPESAFE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`): change them in `.env` and `make deploy`, or save them on the Settings page (a saved key wins over `.env`).
 
 Never print or commit `.env`. Check values by length only, e.g. `v="$(grep -m1 '^SECRETS_KEY=' .env | cut -d= -f2-)"; echo "${#v}"; v=`.
 

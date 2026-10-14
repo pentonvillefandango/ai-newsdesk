@@ -23,6 +23,7 @@ def test_defaults(settings_factory: SettingsFactory) -> None:
     assert s.owner_password_hash == ""
     assert s.login_enabled is False
     assert (s.anthropic_api_key, s.research_engine_api_key, s.typesafe_api_key) == ("", "", "")
+    assert (s.openai_api_key, s.openrouter_api_key) == ("", "")
 
 
 def test_reads_environment(settings_factory: SettingsFactory) -> None:
@@ -72,11 +73,16 @@ def test_unknown_log_level_refused(settings_factory: SettingsFactory) -> None:
 
 
 def test_secrets_not_in_repr(settings_factory: SettingsFactory) -> None:
-    s = settings_factory(anthropic_api_key="sk-test-" + "a" * 20)
+    s = settings_factory(
+        anthropic_api_key="sk-test-" + "a" * 20,
+        openai_api_key="sk-oa-" + "b" * 20,
+        openrouter_api_key="sk-or-" + "c" * 20,
+    )
     for text in (repr(s), str(s)):
         assert TEST_SECRETS_KEY not in text
         assert TEST_SESSION_SECRET not in text
         assert "sk-test-" not in text
+        assert "sk-oa-" not in text and "sk-or-" not in text
     assert "ai-newsdesk.localhost" in repr(s)
 
 

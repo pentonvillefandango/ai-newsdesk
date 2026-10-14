@@ -22,6 +22,8 @@ KEY_LABELS: dict[ApiKeyName, str] = {
     "anthropic": "Anthropic",
     "research_engine": "research-engine",
     "typesafe": "TypeSafe",
+    "openai": "OpenAI",
+    "openrouter": "OpenRouter",
 }
 KeyTester = Callable[[str, RuntimeSettings], Awaitable[str | None]]
 TEST_TIMEOUT_S = 15.0

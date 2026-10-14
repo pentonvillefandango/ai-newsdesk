@@ -178,7 +178,7 @@ def test_empty_key_and_unknown_key_name(client: TestClient) -> None:
     )
     assert r.status_code == 422
     assert "Paste a key first." in r.text
-    r = client.post("/settings/keys/openai", data={"csrf_token": csrf_token(client), "key": "x"})
+    r = client.post("/settings/keys/google", data={"csrf_token": csrf_token(client), "key": "x"})
     assert r.status_code == 404
 
 
@@ -337,3 +337,59 @@ async def test_dev_seed_fills_a_database(tmp_path: Path) -> None:
         assert len(await store.last_runs(5)) == 3
     finally:
         await store.close()
+
+
+# ---- multi-provider: model choices are validated, keys are checked, spend is shared ----------
+
+
+def test_saving_an_openrouter_model_needs_the_key_first(app: FastAPI, client: TestClient) -> None:
+    run(client, _drain, app)  # the start-up catalogue refresh
+    choice = {
+        **VALID,
+        "writer_provider": "openrouter",
+        "writer_model": "google/gemini-3.8-flash",
+    }
+    r = _post(client, "/settings", choice)
+    assert r.status_code == 422  # type: ignore[attr-defined]
+    assert "Add your OpenRouter API key first." in r.text  # type: ignore[attr-defined]
+    assert run(client, load_runtime_settings, app.state.store).writer_provider == "anthropic"
+
+    _post(client, "/settings/keys/openrouter", {"key": "sk-or-" + "k" * 30})
+    r = _post(client, "/settings", choice)
+    assert r.status_code == 303  # type: ignore[attr-defined]
+    rt = run(client, load_runtime_settings, app.state.store)
+    assert (rt.writer_provider, rt.writer_model) == ("openrouter", "google/gemini-3.8-flash")
+
+
+def test_unpriced_and_free_models_are_refused(app: FastAPI, client: TestClient) -> None:
+    run(client, _drain, app)
+    for provider, model, message in (
+        ("openrouter", "nvidia/nemotron-3.5-lightning:free", "isn&#39;t in the OpenRouter model"),
+        ("openai", "gpt-unknown", "no known price"),
+        ("anthropic", "anthropic/claude-haiku-5.5", "Choose a Claude model from the list."),
+    ):
+        data = {**VALID, "consolidator_provider": provider, "consolidator_model": model}
+        r = _post(client, "/settings", data)
+        assert r.status_code == 422, model  # type: ignore[attr-defined]
+        assert message in r.text, model  # type: ignore[attr-defined]
+
+
+def test_spend_from_every_provider_counts_in_the_meter_and_estimates(
+    app: FastAPI, client: TestClient
+) -> None:
+    store = app.state.store
+    for provider, model, purpose, usd in (
+        ("anthropic", "claude-haiku-5-5", Purpose.REVIEW, 0.10),
+        ("openrouter", "google/gemini-3.8-flash", Purpose.REVIEW, 0.20),
+        ("openai", "gpt-5.4-nano", Purpose.WRITE, 0.30),
+        ("openrouter", "openai/gpt-5.4-nano", Purpose.BRIEFING, 0.40),
+    ):
+        usage = Usage(provider=provider, model=model, purpose=purpose, input_tokens=100)
+        run(client, store.add_spend, usage, usd, NOW - timedelta(hours=1))
+    stats = run(client, store.usage_last_days, NOW)
+    assert (stats.review_usd, stats.write_usd, stats.briefing_usd) == pytest.approx(
+        (0.30, 0.30, 0.40)
+    )
+    r = client.get("/settings")
+    assert r.status_code == 200
+    assert '<span class="meter__spent">$1.00</span>' in r.text

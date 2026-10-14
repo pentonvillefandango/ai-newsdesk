@@ -49,13 +49,13 @@ FIELDS = (
     "judge_model",
     "writer_model",
     "briefing_model",
+    "writer_provider",
+    "briefing_provider",
+    "consolidator_provider",
+    "consolidator_model",
     "show_threshold",
     "hn_min_points",
 )
-
-
-def _models_by_provider(pricing: Pricing) -> dict[str, set[str]]:
-    return {provider: set(pricing.models(provider)) for provider in ("anthropic", "typesafe")}
 
 
 def _model_options(pricing: Pricing) -> list[dict[str, str]]:
@@ -165,8 +165,13 @@ async def settings_page(request: Request) -> HTMLResponse:
 async def save_settings(request: Request) -> Response:
     raw = await request.form()
     form = {key: value for key, value in raw.items() if isinstance(value, str)}
+    store = store_of(request)
     parsed = parse_settings_form(
-        form, models_by_provider=_models_by_provider(request.app.state.pricing)
+        form,
+        current=await load_runtime_settings(store),
+        prices=request.app.state.prices,
+        catalogue=request.app.state.catalogue.current,
+        keys=await api_keys_of(request).available(),
     )
     if not parsed.ok:
         return await _render(
@@ -174,7 +179,7 @@ async def save_settings(request: Request) -> Response:
         )
     try:
         # Step 1 validates everything again and saves nothing on error.
-        await update_runtime_settings(store_of(request), **parsed.values)
+        await update_runtime_settings(store, **parsed.values)
     except ValidationError as exc:
         errors = {
             str(e["loc"][0]) if e["loc"] else "form": "This value was refused."

@@ -1,14 +1,24 @@
-"""Validation for the Sources forms. Returns clean values plus field errors; never raises."""
+"""Validation for the Sources and Settings forms. Returns clean values plus field errors; never
+raises."""
 
 from __future__ import annotations
 
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
+from ai_newsdesk.llm.catalogue import Catalogue
+from ai_newsdesk.llm.prices import PriceBook
+from ai_newsdesk.llm.validate import (
+    PROVIDER_ERROR,
+    PROVIDER_LABELS,
+    missing_key_error,
+    validate_model_choice,
+)
 from ai_newsdesk.models import SourceConfig, SourceKind, Trust
+from ai_newsdesk.runtime_settings import RuntimeSettings
 from ai_newsdesk.web.estimate import RUNS_PER_DAY_OPTIONS
 
 ConfigValue = str | int | float | bool | list[str]
@@ -117,7 +127,9 @@ def parse_source_form(
 
 
 BRIEFING_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
-JUDGE_PROVIDERS = ("anthropic", "typesafe")
+JUDGE_PROVIDERS = ("anthropic", "typesafe", "openai", "openrouter")
+# The jobs whose (provider, model) pair the form may set, besides the judge.
+MODEL_JOBS = ("writer", "briefing", "consolidator")
 
 
 @dataclass
@@ -131,9 +143,20 @@ class SettingsForm:
 
 
 def parse_settings_form(
-    form: Mapping[str, str], *, models_by_provider: Mapping[str, set[str]]
+    form: Mapping[str, str],
+    *,
+    current: RuntimeSettings,
+    prices: PriceBook,
+    catalogue: Catalogue | None,
+    keys: Collection[str],
 ) -> SettingsForm:
-    """Validate the runtime-settings form. ``values`` holds typed values for valid fields only."""
+    """Validate the runtime-settings form. ``values`` holds typed values for valid fields only.
+
+    Each AI job's (provider, model) pair goes through validate_model_choice, and a provider
+    that needs a key must have one (``keys``: the names that resolve). A job whose fields are
+    not in the form keeps its saved values (``current``); a posted model without a posted
+    provider is checked against the saved provider.
+    """
     result = SettingsForm()
     values, errors = result.values, result.errors
 
@@ -177,24 +200,43 @@ def parse_settings_form(
     integer("show_threshold", 0, 10, "Enter a whole number from 0 to 10.")
     integer("hn_min_points", 0, 10000, "Enter a whole number from 0 to 10000.")
 
+    def model_choice(job: str, provider: str, model: str) -> None:
+        error = validate_model_choice(provider, model, pricebook=prices, catalogue=catalogue)
+        if error is not None:
+            errors[f"{job}_model"] = error
+            return
+        values[f"{job}_model"] = model
+        key_error = missing_key_error(provider, keys)
+        if key_error is not None:
+            errors[f"{job}_provider"] = key_error
+
     provider = form.get("judge_provider", "")
-    if provider in JUDGE_PROVIDERS:
+    if provider == "typesafe":  # Jev keeps its own check: a TypeSafe model in pricing.yaml
         values["judge_provider"] = provider
         judge_model = form.get("judge_model", "")
-        if judge_model in models_by_provider.get(provider, set()):
+        if judge_model in prices.pricing.models("typesafe"):
             values["judge_model"] = judge_model
         else:
             errors["judge_model"] = "Choose a model that the selected judge provider offers."
+    elif provider in JUDGE_PROVIDERS:
+        values["judge_provider"] = provider
+        model_choice("judge", provider, form.get("judge_model", "").strip())
     else:
         errors["judge_provider"] = "Choose a judge provider."
 
-    claude_models = models_by_provider.get("anthropic", set())
-    for key in ("writer_model", "briefing_model"):
-        model = form.get(key, "")
-        if model in claude_models:
-            values[key] = model
+    for job in MODEL_JOBS:
+        if f"{job}_provider" in form:
+            provider = form[f"{job}_provider"]
+            if provider not in PROVIDER_LABELS:
+                errors[f"{job}_provider"] = PROVIDER_ERROR
+                continue
+            values[f"{job}_provider"] = provider
         else:
-            errors[key] = "Choose a Claude model from the list."
+            provider = getattr(current, f"{job}_provider")
+        if f"{job}_model" in form:
+            model_choice(job, provider, form[f"{job}_model"].strip())
+        elif f"{job}_provider" in form:  # a new provider with the saved model: check the pair
+            model_choice(job, provider, getattr(current, f"{job}_model"))
 
     values["why_it_matters"] = form.get("why_it_matters") == "on"
     return result
