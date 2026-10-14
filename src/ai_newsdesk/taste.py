@@ -87,7 +87,18 @@ class TasteModel:
             bias, int | float
         ):
             return None
-        return cls(tuple(float(w) for w in weights), float(bias), int(data.get("n_examples") or 0))
+        try:
+            parsed = tuple(float(w) for w in weights)
+            parsed_bias = float(bias)
+            raw_n = data.get("n_examples", 0)
+            if isinstance(raw_n, bool) or not isinstance(raw_n, int | float):
+                return None
+            n_examples = int(raw_n)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not all(math.isfinite(v) for v in (*parsed, parsed_bias)):
+            return None
+        return cls(parsed, parsed_bias, n_examples)
 
 
 def _sigmoid(z: float) -> float:
@@ -165,11 +176,15 @@ async def load_model(store: Store) -> TasteModel | None:
 
 
 async def rank_today(store: Store, stories: Sequence[Story]) -> list[Story]:
-    model = await load_model(store)
-    if model is None or not stories:
+    try:
+        model = await load_model(store)
+        if model is None or not stories:
+            return list(stories)
+        features = await store.story_features([s.id for s in stories])
+        return apply(stories, features, model)
+    except Exception as exc:  # the Today page must never fail because of the taste model
+        log.warning("taste ranking skipped: %s", type(exc).__name__)
         return list(stories)
-    features = await store.story_features([s.id for s in stories])
-    return apply(stories, features, model)
 
 
 async def nightly(ctx: PipelineContext) -> None:

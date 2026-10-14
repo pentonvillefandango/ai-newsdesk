@@ -199,3 +199,31 @@ def test_no_numeric_libraries() -> None:
 
     source = Path(taste.__file__).read_text(encoding="utf-8")
     assert "numpy" not in source and "sklearn" not in source
+
+
+def test_from_json_rejects_malformed_values() -> None:
+    model = fit(EXAMPLES)
+    assert model is not None
+    good = model.to_json()
+    for bad in ("abc", [1], {}):
+        assert TasteModel.from_json({**good, "n_examples": bad}) is None
+    nan_weights = [float("nan"), *good["weights"][1:]]
+    assert TasteModel.from_json({**good, "weights": nan_weights}) is None
+    assert TasteModel.from_json({**good, "bias": float("inf")}) is None
+
+
+async def test_rank_today_never_raises() -> None:
+    stories = [story(1, Category.OPINION, 5.0), story(2, Category.RESEARCH, 4.5)]
+    model = fit(EXAMPLES)
+    assert model is not None
+    bad = StubStore(features={1: DISLIKED, 2: LIKED})
+    bad.settings[TASTE_KEY] = {**model.to_json(), "n_examples": "abc"}
+    assert await rank_today(cast(Store, bad), stories) == stories
+
+    class Broken(StubStore):
+        async def story_features(self, story_ids: list[int]) -> dict[int, dict[str, Any]]:
+            raise RuntimeError("db gone")
+
+    broken = Broken(examples=EXAMPLES)
+    await refit(cast(Store, broken))
+    assert await rank_today(cast(Store, broken), stories) == stories
