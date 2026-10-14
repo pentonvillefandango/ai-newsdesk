@@ -1,6 +1,7 @@
 """In-process scheduler: collection runs on evenly spaced slots from 00:00 in TZ, the daily
 briefing after briefing_time, and nightly upkeep after 03:30. Settings are re-read every tick,
-and one asyncio.Lock stops any two jobs from overlapping."""
+and one asyncio.Lock stops any two jobs from overlapping. A briefing that fails (returns False
+or raises) is retried every 30 minutes, at most 6 times per local day."""
 
 from __future__ import annotations
 
@@ -21,6 +22,8 @@ VALID_RUNS_PER_DAY = (1, 2, 4, 6, 12, 24)
 DEFAULT_RUNS_PER_DAY = 4
 DEFAULT_BRIEFING_AT = time(7, 0)
 NIGHTLY_AT = time(3, 30)
+BRIEFING_RETRY_AFTER = timedelta(minutes=30)
+BRIEFING_MAX_ATTEMPTS = 6  # per local day
 
 RunFn = Callable[[PipelineContext, str], Awaitable[RunReport]]
 BriefingFn = Callable[[PipelineContext, date], Awaitable[bool]]
@@ -83,7 +86,10 @@ class Scheduler:
         self.lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
         self._last_slot: datetime | None = None
-        self._briefing_day: date | None = None
+        self._briefing_day: date | None = None  # the day whose briefing is done
+        self._briefing_try_day: date | None = None
+        self._briefing_tries = 0
+        self._briefing_last_try: datetime | None = None
         self._nightly_day: date | None = None
         self.last_tick_at: datetime | None = None
         self.next_run_at: datetime | None = None
@@ -120,6 +126,41 @@ class Scheduler:
         async with self.lock:
             return await self._run_fn(self.ctx, trigger)
 
+    def _may_try_briefing(self, day: date, now: datetime) -> bool:
+        if day != self._briefing_try_day:
+            self._briefing_try_day, self._briefing_tries, self._briefing_last_try = day, 0, None
+        if self._briefing_tries >= BRIEFING_MAX_ATTEMPTS:
+            return False
+        last = self._briefing_last_try
+        return last is None or now - last >= BRIEFING_RETRY_AFTER
+
+    async def _maybe_brief(self, day: date, now: datetime) -> None:
+        """Write `day`'s briefing. The day is done only when the job returns True (or a briefing
+        already exists); otherwise retry every BRIEFING_RETRY_AFTER, at most
+        BRIEFING_MAX_ATTEMPTS times that day."""
+        if await self.ctx.store.get_briefing(day) is not None:
+            self._briefing_day = day
+            return
+        if not self._may_try_briefing(day, now):
+            return
+        self._briefing_tries += 1
+        self._briefing_last_try = now
+        try:
+            async with self.lock:
+                ok = await self._briefing_fn(self.ctx, day)
+        except Exception:  # retried on a later tick, like a False result
+            log.exception("briefing for %s failed", day.isoformat())
+            ok = False
+        if ok:
+            self._briefing_day = day
+        else:
+            log.warning(
+                "no briefing for %s (attempt %d of %d)",
+                day.isoformat(),
+                self._briefing_tries,
+                BRIEFING_MAX_ATTEMPTS,
+            )
+
     async def tick(self) -> None:
         now = self.ctx.clock.now()
         self.last_tick_at = now
@@ -136,10 +177,7 @@ class Scheduler:
 
         day = briefing_due(now, rs.briefing_time, tz)
         if day is not None and day != self._briefing_day:
-            self._briefing_day = day
-            if await self.ctx.store.get_briefing(day) is None:
-                async with self.lock:
-                    await self._briefing_fn(self.ctx, day)
+            await self._maybe_brief(day, now)
 
         if self._nightly_fn is not None:
             local = now.astimezone(tz)

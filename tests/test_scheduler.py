@@ -1,7 +1,8 @@
 import asyncio
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from ai_newsdesk.clock import FixedClock
 from ai_newsdesk.pipeline import PipelineContext, RunReport
 from ai_newsdesk.scheduler import (
     Scheduler,
@@ -153,3 +154,64 @@ async def test_start_stop_and_cancel_mid_job(store: Store) -> None:
     assert not sched.alive
     assert cancelled == [True]
     assert not sched.lock.locked()
+
+
+class FlakyBriefing:
+    """Returns the scripted results in order (an Exception is raised), then True."""
+
+    def __init__(self, *results: bool | Exception) -> None:
+        self.results = list(results)
+        self.calls: list[tuple[datetime, date]] = []
+
+    async def __call__(self, ctx: PipelineContext, day: date) -> bool:
+        self.calls.append((ctx.clock.now(), day))
+        result = self.results.pop(0) if self.results else True
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+def briefing_scheduler(store: Store, clock: FixedClock, fn: FlakyBriefing) -> Scheduler:
+    return Scheduler(make_ctx(store, clock), run_fn=Recorder().run, briefing_fn=fn)
+
+
+async def test_failed_briefing_is_retried_after_30_minutes_until_it_succeeds(
+    store: Store,
+) -> None:
+    clock = FixedClock(datetime(2026, 10, 14, 6, 0, tzinfo=UTC))  # 07:00 BST
+    fn = FlakyBriefing(False, RuntimeError("writer down"))
+    sched = briefing_scheduler(store, clock, fn)
+    await sched.tick()  # 07:00 attempt 1: False
+    clock.advance(timedelta(minutes=29))
+    await sched.tick()  # 07:29: too soon
+    assert len(fn.calls) == 1
+    clock.advance(timedelta(minutes=1))
+    await sched.tick()  # 07:30 attempt 2: raises, but the scheduler carries on
+    clock.advance(timedelta(minutes=30))
+    await sched.tick()  # 08:00 attempt 3: True
+    clock.advance(timedelta(minutes=30))
+    await sched.tick()  # done for the day
+    assert [at.astimezone(LONDON).time() for at, _ in fn.calls] == [
+        time(7, 0),
+        time(7, 30),
+        time(8, 0),
+    ]
+
+
+async def test_briefing_attempts_are_capped_per_day_and_reset_next_day(store: Store) -> None:
+    clock = FixedClock(datetime(2026, 10, 14, 6, 0, tzinfo=UTC))  # 07:00 BST
+    fn = FlakyBriefing(*([False] * 7))
+    sched = briefing_scheduler(store, clock, fn)
+    for _ in range(12):  # every 30 minutes until 12:30 BST
+        await sched.tick()
+        clock.advance(timedelta(minutes=30))
+    assert len(fn.calls) == 6
+    assert {day for _, day in fn.calls} == {date(2026, 10, 14)}
+    clock.set(datetime(2026, 10, 15, 5, 59, tzinfo=UTC))  # 06:59 BST next day: not yet due
+    await sched.tick()
+    assert len(fn.calls) == 6
+    clock.advance(timedelta(minutes=1))
+    await sched.tick()  # 07:00 BST: a fresh day, attempt 1 (False, the 7th scripted)
+    clock.advance(timedelta(minutes=30))
+    await sched.tick()  # 07:30: attempt 2 succeeds
+    assert [day for _, day in fn.calls[6:]] == [date(2026, 10, 15)] * 2
