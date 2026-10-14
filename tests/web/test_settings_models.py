@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -655,3 +655,50 @@ def test_a_no_js_result_is_shown_once(tclient: TestClient) -> None:
 
 async def _release(lock: asyncio.Lock) -> None:
     lock.release()
+
+
+def test_a_hung_test_times_out_and_frees_the_run_lock(
+    tapp: FastAPI, tclient: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review R1: a stalled provider can't hold the run lock for long."""
+    from contextlib import asynccontextmanager
+
+    from ai_newsdesk.web import model_test
+    from tests.fake_model_client import FakeModelClient
+
+    class Hung(FakeModelClient):
+        async def structured(self, **kwargs: Any) -> Any:  # type: ignore[override]
+            await asyncio.sleep(3600)
+
+    @asynccontextmanager
+    async def hung_client(provider: str, model: str) -> AsyncIterator[Any]:
+        yield Hung([])
+
+    monkeypatch.setattr(model_test, "TEST_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(tapp.state, "model_client", hung_client)
+    _save_keys(tclient)
+    form = _test_form(
+        tclient,
+        "writer",
+        writer_provider="openrouter",
+        writer_model="google/gemini-3.8-flash",
+        writer_model_other="",
+    )
+    r = _post(tclient, "/settings/models/test", form, headers=HX)
+    assert "The model didn&#39;t answer within 30 seconds." in r.text
+    assert not tapp.state.run_lock.locked()
+
+
+def test_the_test_clients_never_retry(tapp: FastAPI, tclient: TestClient) -> None:
+    from ai_newsdesk.llm.openai_client import OpenAICompatibleClient
+
+    # Anthropic's pool setting is covered in test_factory: its SDK can't use this test's
+    # httpx transport.
+    _save_keys(tclient)
+
+    async def build_or() -> int:
+        async with tapp.state.model_client("openrouter", "google/gemini-3.8-flash") as client:
+            assert isinstance(client, OpenAICompatibleClient)
+            return client._client.max_retries  # type: ignore[attr-defined]
+
+    assert run(tclient, build_or) == 0

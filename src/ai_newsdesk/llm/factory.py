@@ -20,6 +20,8 @@ from ai_newsdesk.llm.openai_client import OpenAICompatibleClient, make_sdk
 from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.llm.validate import missing_key_error, validate_model_choice
 
+DEFAULT_MAX_RETRIES = 2  # both SDKs' own default
+
 
 class UnusableModelError(ValueError):
     """The choice cannot be used; the message is for the owner and never holds a key."""
@@ -29,9 +31,16 @@ class SdkPool:
     """SDK clients for one context build, created on first use. `keys` maps provider names to
     resolved keys (an empty Anthropic key still builds a client whose calls fail with 401)."""
 
-    def __init__(self, keys: Mapping[str, str], *, http_client: Any | None = None) -> None:
+    def __init__(
+        self,
+        keys: Mapping[str, str],
+        *,
+        http_client: Any | None = None,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+    ) -> None:
         self._keys = dict(keys)
         self._http = http_client  # tests only: a MockTransport client
+        self._max_retries = max_retries  # 0 for a one-off call that must stay short
         self._anthropic: anthropic.AsyncAnthropic | None = None
         self._openai: dict[str, openai.AsyncOpenAI] = {}
 
@@ -44,14 +53,19 @@ class SdkPool:
     def anthropic(self) -> anthropic.AsyncAnthropic:
         if self._anthropic is None:
             self._anthropic = anthropic.AsyncAnthropic(
-                api_key=self._keys.get("anthropic") or "not-set", http_client=self._http
+                api_key=self._keys.get("anthropic") or "not-set",
+                http_client=self._http,
+                max_retries=self._max_retries,
             )
         return self._anthropic
 
     def openai_compatible(self, provider: str) -> openai.AsyncOpenAI:
         if provider not in self._openai:
             self._openai[provider] = make_sdk(
-                provider, self._keys.get(provider, ""), http_client=self._http
+                provider,
+                self._keys.get(provider, ""),
+                http_client=self._http,
+                max_retries=self._max_retries,
             )
         return self._openai[provider]
 

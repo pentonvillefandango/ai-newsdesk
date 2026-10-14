@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -13,6 +15,7 @@ from ai_newsdesk.llm.base import ModelClient, StructuredResult
 from ai_newsdesk.llm.factory import UnusableModelError
 from ai_newsdesk.llm.prices import Price, PriceBook
 from ai_newsdesk.models import Purpose, Usage
+from ai_newsdesk.web import model_test
 from ai_newsdesk.web.model_test import (
     TEST_MAX_TOKENS,
     TEST_SYSTEM,
@@ -158,6 +161,29 @@ async def test_only_the_chosen_providers_key_is_needed() -> None:
         "openrouter", "google/gemini-3.8-flash", Clients(fake), keys={"openrouter"}
     )
     assert result.ok and result.called
+
+
+class SlowClient(FakeModelClient):
+    """Accepts the call and never answers."""
+
+    async def structured(self, **kwargs: Any) -> Any:  # type: ignore[override]
+        self.calls.append(kwargs)
+        await asyncio.sleep(3600)
+
+
+async def test_a_test_that_never_answers_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(model_test, "TEST_TIMEOUT_S", 0.05)
+    slow, budget = SlowClient([]), FakeBudget()
+    started = time.perf_counter()
+    result = await _test("openrouter", "google/gemini-3.8-flash", Clients(slow), budget)
+    assert time.perf_counter() - started < 1
+    assert result.called and not result.ok
+    assert result.message == "The model didn't answer within 30 seconds."
+    assert len(slow.calls) == 1 and budget.recorded == []
+
+
+def test_the_test_timeout_is_30_seconds() -> None:
+    assert model_test.TEST_TIMEOUT_S == 30
 
 
 async def test_an_unusable_client_is_refused() -> None:

@@ -119,3 +119,12 @@ async def test_a_pool_leaves_an_injected_http_client_open() -> None:
     await pool.aclose()
     assert not http.is_closed
     await http.aclose()
+
+
+def test_a_pool_can_turn_retries_off() -> None:
+    pool = SdkPool(KEYS, max_retries=0)
+    assert pool.openai_compatible("openrouter").max_retries == 0
+    assert pool.anthropic().max_retries == 0
+    default = SdkPool(KEYS)
+    assert default.openai_compatible("openai").max_retries == 2
+    assert default.anthropic().max_retries == 2

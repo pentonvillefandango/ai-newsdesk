@@ -215,3 +215,53 @@ async def test_briefing_attempts_are_capped_per_day_and_reset_next_day(store: St
     clock.advance(timedelta(minutes=30))
     await sched.tick()  # 07:30: attempt 2 succeeds
     assert [day for _, day in fn.calls[6:]] == [date(2026, 10, 15)] * 2
+
+
+async def test_a_scheduled_run_waits_for_the_lock(store: Store) -> None:
+    """A Test or (stage 4) a comparison may hold the lock: the slot's run waits, not skips."""
+    rec = Recorder()
+    sched = scheduler_for(
+        store, MutableClock(datetime(2026, 10, 14, 9, 0, tzinfo=UTC)), rec, schedule_wait_s=5.0
+    )
+    await sched.lock.acquire()
+    waiting = asyncio.create_task(sched.run_now("schedule"))
+    await asyncio.sleep(0.05)
+    assert not waiting.done() and rec.runs == []
+    sched.lock.release()
+    report = await asyncio.wait_for(waiting, 1)
+    assert report is not None and rec.runs == ["schedule"]
+    assert not sched.lock.locked()
+
+
+async def test_a_scheduled_run_skips_after_waiting_too_long(store: Store, caplog: object) -> None:
+    import logging
+
+    import pytest
+
+    assert isinstance(caplog, pytest.LogCaptureFixture)
+    rec = Recorder()
+    sched = scheduler_for(
+        store, MutableClock(datetime(2026, 10, 14, 9, 0, tzinfo=UTC)), rec, schedule_wait_s=0.05
+    )
+    async with sched.lock:
+        with caplog.at_level(logging.WARNING):
+            assert await sched.run_now("schedule") is None
+    assert rec.runs == []
+    assert "schedule run skipped" in caplog.text
+    assert not sched.lock.locked()
+
+
+async def test_a_manual_run_still_reports_busy_at_once(store: Store) -> None:
+    rec = Recorder()
+    sched = scheduler_for(
+        store, MutableClock(datetime(2026, 10, 14, 9, 0, tzinfo=UTC)), rec, schedule_wait_s=5.0
+    )
+    async with sched.lock:
+        assert await asyncio.wait_for(sched.run_now("manual"), 0.5) is None
+    assert rec.runs == []
+
+
+def test_the_default_schedule_wait_is_20_minutes() -> None:
+    from ai_newsdesk.scheduler import SCHEDULE_LOCK_WAIT_S
+
+    assert SCHEDULE_LOCK_WAIT_S == 20 * 60

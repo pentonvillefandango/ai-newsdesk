@@ -8,6 +8,7 @@ spend like any other (purpose review: the spend table allows only the three job 
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable, Collection
 from contextlib import AbstractAsyncContextManager
@@ -26,6 +27,10 @@ from ai_newsdesk.models import Purpose, Usage
 # Room for a reasoning model's thinking as well as the ~10-token answer: a lower cap makes
 # such models stop at the limit and the test fail although the model works.
 TEST_MAX_TOKENS = 512
+# The Test holds the pipeline lock: a provider that accepts the call and then stalls must not
+# hold it (and delay a scheduled run) for the SDK's 10-minute default.
+TEST_TIMEOUT_S = 30
+TIMEOUT_MESSAGE = "The model didn't answer within 30 seconds."
 TEST_SYSTEM = (
     "You are answering a connection test. Reply with the JSON object the schema asks for,"
     " with ok set to true."
@@ -99,21 +104,27 @@ async def run_model_test(
                     " for the 1st."
                 )
             started = time.perf_counter()
+            timed_out = False
             try:
-                result: StructuredResult[ConnectionCheck] = await client.structured(
-                    system=TEST_SYSTEM,
-                    user=TEST_USER,
-                    schema=ConnectionCheck,
-                    max_tokens=TEST_MAX_TOKENS,
-                    purpose=Purpose.REVIEW,
-                )
+                async with asyncio.timeout(TEST_TIMEOUT_S):
+                    result: StructuredResult[ConnectionCheck] = await client.structured(
+                        system=TEST_SYSTEM,
+                        user=TEST_USER,
+                        schema=ConnectionCheck,
+                        max_tokens=TEST_MAX_TOKENS,
+                        purpose=Purpose.REVIEW,
+                    )
+            except TimeoutError:  # no usage is known, so nothing is recorded
+                result, timed_out = StructuredResult(), True
             except Exception as exc:  # clients should not raise; never show the message
                 result = StructuredResult(error=describe_error(exc))
             latency_ms = round((time.perf_counter() - started) * 1000)
     except UnusableModelError as exc:
         return refused(str(exc))
     cost = await budget.record(result.usage) if result.usage is not None else None
-    if result.parsed is not None:
+    if timed_out:
+        message = TIMEOUT_MESSAGE
+    elif result.parsed is not None:
         message = "It works."
     elif result.refused:
         message = "The model refused the test."

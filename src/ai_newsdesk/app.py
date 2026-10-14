@@ -333,7 +333,8 @@ def create_app(
         async def client() -> AsyncIterator[ModelClient]:
             deps: AppDeps = app.state.deps
             keys = {name: await deps.api_keys.resolve_api_key(name) for name in MODEL_PROVIDERS}
-            sdks = SdkPool(keys, http_client=model_http_client)
+            # One attempt only: the Test holds the run lock, so it must stay short.
+            sdks = SdkPool(keys, http_client=model_http_client, max_retries=0)
             try:
                 yield make_client(
                     provider,
