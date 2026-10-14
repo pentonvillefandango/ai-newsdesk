@@ -496,6 +496,35 @@ class Store:
         )
         return [(r["id"], r["url"], SourceKind(r["kind"]), r["snippet"]) for r in rows]
 
+    async def stranded_new_items(
+        self, now: dt.datetime, hours: int = 48
+    ) -> list[tuple[int, Candidate, SourceConfig]]:
+        """Items still `new` that were fetched in the last `hours`, with their source, in id
+        order. Only a run that failed after inserting them leaves items `new`; the next run puts
+        them back through the pre-filter so they are queued or dropped, never stranded."""
+        rows = await self._all(
+            "SELECT i.id AS item_id, i.url, i.title, i.author, i.published_at, i.snippet,"
+            " i.hn_points, s.* FROM items i JOIN sources s ON s.id = i.source_id"
+            " WHERE i.status = 'new' AND i.fetched_at >= ? ORDER BY i.id",
+            (_ts(now - dt.timedelta(hours=hours)),),
+        )
+        return [
+            (
+                int(r["item_id"]),
+                Candidate(
+                    source_id=r["id"],
+                    url=r["url"],
+                    title=r["title"],
+                    author=r["author"],
+                    published_at=_dt(r["published_at"]),
+                    snippet=r["snippet"] or "",
+                    hn_points=r["hn_points"],
+                ),
+                self._source(r),
+            )
+            for r in rows
+        ]
+
     async def set_item_fields(self, item_id: int, **fields: Any) -> None:
         """Update whitelisted item columns (see ITEM_FIELDS). KeyError if no such item."""
         if not fields:

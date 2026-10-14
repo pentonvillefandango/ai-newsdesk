@@ -4,6 +4,7 @@ answer decides, with the dedupe link and in-pass near-duplicates as fall-backs."
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,6 +12,8 @@ from datetime import datetime
 from ai_newsdesk.dedupe import find_story_link, title_tokens
 from ai_newsdesk.models import Category, ReviewInput, StoryRef, Verdict
 from ai_newsdesk.store.store import Store
+
+log = logging.getLogger(__name__)
 
 MAX_CANDIDATES = 5
 MIN_SHARED_TOKENS = 2
@@ -99,7 +102,11 @@ async def attach(
             if story_id is None:
                 category = j.verdict.category if j.verdict is not None else Category.OTHER
                 story_id = await store.create_story(title, category, at)
-            await store.attach_item(item_id, story_id, at)
+            try:
+                await store.attach_item(item_id, story_id, at)
+            except KeyError:  # deleted with its source mid-run; the other items still attach
+                log.warning("item %d no longer exists (attach); skipped", item_id)
+                continue
         attached.append((item_id, title, story_id))
         if story_id not in touched:
             touched.append(story_id)

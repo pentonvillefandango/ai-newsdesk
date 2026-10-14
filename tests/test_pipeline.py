@@ -1,10 +1,12 @@
+import asyncio
 from datetime import UTC, date, datetime
 
 import pytest
 
 from ai_newsdesk import pipeline
-from ai_newsdesk.models import Category, SourceKind, Trust, Verdict
+from ai_newsdesk.models import Category, SourceConfig, SourceKind, SourceResult, Trust, Verdict
 from ai_newsdesk.pipeline import COUNT_KEYS, run_briefing, run_once, stored_signal
+from ai_newsdesk.protocols import Source
 from ai_newsdesk.store.store import Store
 from tests.pipeline_ctx import RecordingWriter, ScriptedJudge, ScriptedSource, candidate, make_ctx
 from tests.pipeline_helpers import MutableClock, add_source
@@ -401,3 +403,85 @@ async def test_same_name_sources_of_different_kinds_use_their_own_weight(store: 
         "Alpha lab ships robot arm": 8.0,  # 5 x 1.6
         "Zeta startup opens data centre": 4.0,  # 5 x 0.8
     }
+
+
+class SourceDeletingJudge(ScriptedJudge):
+    """Deletes the source of the first item in each batch while 'judging' (mid-run deletion)."""
+
+    def __init__(self, store: Store, source_of: dict[str, int]) -> None:
+        super().__init__()
+        self.store = store
+        self.source_of = source_of
+
+    async def review(self, inputs):  # type: ignore[no-untyped-def]
+        result = await super().review(inputs)
+        await self.store.delete_source(self.source_of[inputs[0].title])
+        return result
+
+
+async def test_item_deleted_mid_run_does_not_discard_other_verdicts(store: Store) -> None:
+    gone = await add_source(store, "Doomed blog")
+    lab = await add_source(store, "Lab blog")
+    feeds = ScriptedSource(SourceKind.FEED)
+    feeds.by_source[gone.id] = [candidate(gone.id, MYSTERY_TITLE, "https://example.com/doomed")]
+    feeds.by_source[lab.id] = [candidate(lab.id, LAB_TITLE, "https://example.com/haiku")]
+    judge = SourceDeletingJudge(store, {MYSTERY_TITLE: gone.id, LAB_TITLE: lab.id})
+    ctx = make_ctx(store, MutableClock(NOW), sources={SourceKind.FEED: feeds}, judge=judge)
+    report = await run_once(ctx, "test")
+    assert report.error is None
+    assert judge.calls[0][0].title == MYSTERY_TITLE  # the deleted one comes first
+    [story] = await store.today_stories(NOW, 4)
+    assert story.headline == LAB_TITLE
+    assert report.counts["reviewed"] == 1
+
+
+async def test_items_stranded_by_a_crash_are_moved_on_next_run(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    feeds, searches, _, _ = await two_source_setup(store)
+    clock = MutableClock(NOW)
+    real_decide = pipeline.prefilter.decide
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("prefilter bug")
+
+    monkeypatch.setattr(pipeline.prefilter, "decide", boom)
+    sources: dict[SourceKind, Source] = {SourceKind.FEED: feeds, SourceKind.SEARCH: searches}
+    first = await run_once(make_ctx(store, clock, sources=sources, judge=scripted_judge()), "t")
+    assert first.error is not None and first.counts["new"] == 2
+
+    monkeypatch.setattr(pipeline.prefilter, "decide", real_decide)
+    clock.advance(hours=6)
+    second = await run_once(make_ctx(store, clock, sources=sources, judge=scripted_judge()), "t")
+    assert second.error is None
+    assert second.counts["new"] == 0  # same URLs: deduped
+    assert second.counts["recovered"] == 2
+    assert (second.counts["queued"], second.counts["reviewed"]) == (2, 2)
+    assert [s.headline for s in await store.today_stories(clock.now(), 4)] == [LAB_TITLE]
+
+
+class BlockingSource(ScriptedSource):
+    """Signals that collection started, then blocks until cancelled."""
+
+    def __init__(self, kind: SourceKind) -> None:
+        super().__init__(kind)
+        self.started = asyncio.Event()
+
+    async def collect(self, src: SourceConfig, since: datetime) -> SourceResult:
+        self.started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+async def test_cancelled_run_is_finished_with_error_cancelled(store: Store) -> None:
+    await add_source(store, "Lab blog")
+    feeds = BlockingSource(SourceKind.FEED)
+    ctx = make_ctx(store, MutableClock(NOW), sources={SourceKind.FEED: feeds})
+    task = asyncio.create_task(run_once(ctx, "test"))
+    await feeds.started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    [run] = await store.last_runs(1)
+    assert run.finished_at is not None
+    assert run.error == "cancelled"

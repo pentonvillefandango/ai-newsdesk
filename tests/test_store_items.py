@@ -257,3 +257,29 @@ async def test_bad_candidates_are_skipped_not_fatal(store: Store) -> None:
     )
     assert len(ids) == 2
     assert [t[0] for t in await store.recent_titles(24)] == ids
+
+
+async def test_stranded_new_items_lists_recent_new_items_with_their_source(store: Store) -> None:
+    sid = await _source(store)
+    old, fresh, queued = await store.add_candidates(
+        [make_candidate(sid, url="https://a.test/old")], NOW - timedelta(hours=49)
+    ) + await store.add_candidates(
+        [
+            make_candidate(sid, url="https://a.test/fresh", author="Ann", hn_points=12),
+            make_candidate(sid, url="https://a.test/queued"),
+        ],
+        NOW - timedelta(hours=1),
+    )
+    await store.mark_items([queued], ItemStatus.QUEUED)
+    stranded = await store.stranded_new_items(NOW, hours=48)
+    assert [item_id for item_id, _, _ in stranded] == [fresh]
+    [(_, cand, src)] = stranded
+    assert (cand.source_id, cand.url, cand.author, cand.hn_points) == (
+        sid,
+        "https://a.test/fresh",
+        "Ann",
+        12,
+    )
+    assert cand.snippet == "Model X is a new open-weights model."
+    assert src.id == sid and src.name == "Lab"
+    assert old not in {i for i, _, _ in stranded}

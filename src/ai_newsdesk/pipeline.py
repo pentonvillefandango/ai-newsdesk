@@ -5,6 +5,9 @@ on. Every AI call is preceded by a budget pre-check using that call's worst-case
 retried within a run: an item the judge fails on is marked `review_failed` (and shown), and
 `Store.queued_review_inputs` offers it again on the next run, up to MAX_REVIEW_ATTEMPTS; a story
 the writer leaves out is counted with `Store.mark_text_failed` and offered again the same way.
+An item deleted mid-run (its source removed) is skipped with a warning, so the other verdicts are
+still saved; items a crashed run left `new` are put back through the pre-filter by the next run;
+and the runs row is always finished, with error "cancelled" when the task is cancelled.
 """
 
 from __future__ import annotations
@@ -48,6 +51,7 @@ COUNT_KEYS = (
     "sources_failed",
     "collected",
     "new",
+    "recovered",
     "near_duplicates",
     "dropped",
     "queued",
@@ -136,13 +140,22 @@ async def run_once(ctx: PipelineContext, trigger: str) -> RunReport:
     report = RunReport(run_id=run_id)
     try:
         await _run(ctx, report)
+    except asyncio.CancelledError:  # shutdown: finish the run row, then let it propagate
+        log.warning("run %d cancelled", run_id)
+        report.error = "cancelled"
+        raise
     except Exception as exc:  # recorded on the run, never raised
         log.exception("run %d failed", run_id)
         report.error = f"{type(exc).__name__}: {exc}"[:500]
-    await ctx.store.finish_run(
-        run_id, ctx.clock.now(), report.counts, report.cost_usd, report.error
-    )
+    finally:  # no run stays "running" forever
+        await ctx.store.finish_run(
+            run_id, ctx.clock.now(), report.counts, report.cost_usd, report.error
+        )
     return report
+
+
+def _gone(item_id: int, stage: str) -> None:
+    log.warning("item %d no longer exists (%s); skipped", item_id, stage)
 
 
 async def _run(ctx: PipelineContext, report: RunReport) -> None:
@@ -150,8 +163,11 @@ async def _run(ctx: PipelineContext, report: RunReport) -> None:
     ctx.budget.runtime = rs
     await ctx.budget.refresh()
     now = ctx.clock.now()
+    # Items a failed run left `new` go back through the pre-filter with this run's items.
+    stranded = await ctx.store.stranded_new_items(now, hours=QUEUE_EXPIRY_HOURS)
+    report.counts["recovered"] = len(stranded)
     new_items = await _collect(ctx, rs, now, report)
-    queued_ids = await _prefilter(ctx, new_items, report)
+    queued_ids = await _prefilter(ctx, stranded + new_items, report)
     if queued_ids:
         try:
             await enrich_bodies(ctx.store, ctx.research_engine, queued_ids)
@@ -221,7 +237,11 @@ async def _prefilter(
     drop: list[int] = []
     for row in rows:
         decision = prefilter.decide(row, others.get(row.item_id, 0), blocklist)
-        await ctx.store.set_item_fields(decision.item_id, heuristic_score=decision.score)
+        try:
+            await ctx.store.set_item_fields(decision.item_id, heuristic_score=decision.score)
+        except KeyError:  # deleted with its source mid-run
+            _gone(decision.item_id, "prefilter")
+            continue
         (keep if decision.keep else drop).append(decision.item_id)
     if keep:
         await ctx.store.mark_items(keep, ItemStatus.QUEUED)
@@ -288,14 +308,18 @@ async def _review(
         verdict = verdicts.get(inp.item_id)
         if verdict is not None:
             signal = stored_signal(verdict, weights.get((inp.source_kind, inp.source_name), 1.0))
-            await ctx.store.save_verdict(verdict, signal)
+            try:
+                await ctx.store.save_verdict(verdict, signal)
+            except KeyError:  # deleted with its source mid-run; keep the other verdicts
+                _gone(inp.item_id, "save_verdict")
+                continue
             judged.append(cluster.Judged(inp, verdict, signal))
         elif inp.item_id in failed_ids:
             judged.append(cluster.Judged(inp, None, None))
     if failed_ids:  # retried on the next run by queued_review_inputs (R2)
         await ctx.store.mark_items(sorted(failed_ids), ItemStatus.REVIEW_FAILED)
     ctx.budget.note_reviewed(len(verdicts) + len(failed_ids))
-    report.counts["reviewed"] = len(verdicts)
+    report.counts["reviewed"] = sum(1 for j in judged if j.verdict is not None)
     report.counts["review_failed"] = len(failed_ids)
     touched = await cluster.attach(ctx.store, judged, links, rs.show_threshold, now, current)
     report.counts["stories_touched"] = len(touched)
@@ -323,7 +347,11 @@ async def _write(ctx: PipelineContext, rs: RuntimeSettings, report: RunReport) -
                 continue
             if not inp.include_why:
                 text = text.model_copy(update={"why_it_matters": None})
-            await ctx.store.save_story_text(text)
+            try:
+                await ctx.store.save_story_text(text)
+            except KeyError:
+                log.warning("story %d no longer exists (write); skipped", text.story_id)
+                continue
             written.add(text.story_id)
         missing = [w.story_id for w in batch if w.story_id not in written]
         if missing:  # offered again next run until MAX_TEXT_ATTEMPTS
