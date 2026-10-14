@@ -202,8 +202,12 @@ def test_clear_key_falls_back_to_env(tmp_path: Path) -> None:
         assert SECRET not in page
 
 
-def test_typesafe_key_appears_only_with_the_jev_judge(app: FastAPI, client: TestClient) -> None:
-    assert 'id="key-typesafe"' not in client.get("/settings").text
+def test_typesafe_key_box_is_always_shown(app: FastAPI, client: TestClient) -> None:
+    """Owner feedback 1: the key can be entered before switching the judge to Jev."""
+    page = client.get("/settings").text
+    assert 'id="key-typesafe"' in page
+    assert 'action="/settings/keys/typesafe"' in page
+    assert 'id="key-input-typesafe"' in page
     run(client, update_runtime_settings, app.state.store, judge_provider="typesafe")
     assert 'id="key-typesafe"' in client.get("/settings").text
 

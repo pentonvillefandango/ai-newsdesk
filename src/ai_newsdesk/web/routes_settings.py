@@ -116,11 +116,10 @@ async def _render(
     rates = rates_from(await store.usage_last_days(now))
     spent = await store.month_spend(now, settings.tz)
     budget = runtime.monthly_budget_usd
-    show_typesafe = runtime.judge_provider == "typesafe" or form.get("judge_provider") == "typesafe"
     api_keys = api_keys_of(request)
     # Step 1's ApiKeyStatus: name, set_in_ui, set_in_env, updated_at, is_set. Never the key.
-    statuses = [await api_keys.api_key_status(name) for name in API_KEY_NAMES]
-    keys = [k for k in statuses if k.name != "typesafe" or show_typesafe or k.set_in_ui]
+    # Every key, TypeSafe included, so a key can be saved before the judge is switched to Jev.
+    keys = [await api_keys.api_key_status(name) for name in API_KEY_NAMES]
     runs: list[dict[str, Any]] = []
     for record in await store.last_runs(5):
         data = run_dict(record)
