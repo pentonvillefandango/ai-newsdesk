@@ -23,13 +23,15 @@ from ai_newsdesk.config import Settings
 from ai_newsdesk.consolidate import HaikuConsolidator
 from ai_newsdesk.judges.haiku import HaikuJudge
 from ai_newsdesk.judges.jev import JevJudge
+from ai_newsdesk.llm.catalogue import CatalogueFetch, ModelCatalogue, http_fetcher
+from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.normalise import canonical_url
 from ai_newsdesk.pipeline import PipelineContext
 from ai_newsdesk.pricing import Pricing
 from ai_newsdesk.protocols import Clock, Judge
 from ai_newsdesk.research_engine import HttpResearchEngine
 from ai_newsdesk.runtime_settings import ApiKeys, load_runtime_settings
-from ai_newsdesk.scheduler import Scheduler
+from ai_newsdesk.scheduler import NightlyFn, Scheduler
 from ai_newsdesk.sources.registry import build_sources
 from ai_newsdesk.store import Store
 from ai_newsdesk.web.app_routes import build_router
@@ -49,6 +51,8 @@ class AppDeps:
     http: httpx.AsyncClient
     clock: Clock
     api_keys: ApiKeys
+    prices: PriceBook  # (provider, model) prices; reads the live catalogue
+    catalogue: ModelCatalogue
 
 
 CtxFactory = Callable[[AppDeps], Awaitable[PipelineContext]]
@@ -84,7 +88,7 @@ async def build_context(deps: AppDeps) -> PipelineContext:
         writer=HaikuWriter(
             client, runtime.writer_model, deps.pricing, briefing_model=runtime.briefing_model
         ),
-        budget=Budget(store, deps.pricing, deps.clock, runtime, tz=settings.tz),
+        budget=Budget(store, deps.pricing, deps.clock, runtime, tz=settings.tz, prices=deps.prices),
         clock=deps.clock,
         settings=settings,
         # The judge model when the judge is Claude; Jev models cannot take this call.
@@ -94,6 +98,23 @@ async def build_context(deps: AppDeps) -> PipelineContext:
             deps.pricing,
         ),
     )
+
+
+def nightly_jobs(catalogue: ModelCatalogue) -> NightlyFn:
+    """The nightly chain: the taste refit, then the model catalogue refresh (which never
+    raises), even when the refit fails."""
+
+    async def run(ctx: PipelineContext) -> None:
+        try:
+            await taste.nightly(ctx)
+        finally:
+            await catalogue.refresh()
+
+    return run
+
+
+async def _refresh(catalogue: ModelCatalogue) -> None:
+    await catalogue.refresh()
 
 
 async def _http_error(request: Request, exc: Exception) -> Response:
@@ -111,6 +132,7 @@ def create_app(
     key_testers: Mapping[str, KeyTester] | None = None,
     config_dir: Path = Path("config"),
     clock: Clock | None = None,
+    catalogue_fetch: CatalogueFetch | None = None,
 ) -> FastAPI:
     settings = settings if settings is not None else Settings()  # pyright: ignore[reportCallIssue]
     factory: CtxFactory = ctx_factory if ctx_factory is not None else build_context
@@ -131,6 +153,13 @@ def create_app(
             await store.seed_sources_if_empty(config_dir / "sources.yaml")
             pricing = Pricing.load(config_dir / "pricing.yaml")
             api_keys = ApiKeys(store, settings)
+            catalogue = ModelCatalogue(
+                store,
+                catalogue_fetch if catalogue_fetch is not None else http_fetcher(http),
+                app_clock,
+            )
+            await catalogue.load()
+            prices = PriceBook(pricing, lambda: catalogue.current)
             deps = AppDeps(
                 settings=settings,
                 store=store,
@@ -138,11 +167,15 @@ def create_app(
                 http=http,
                 clock=app_clock,
                 api_keys=api_keys,
+                prices=prices,
+                catalogue=catalogue,
             )
             app.state.store = store
             app.state.pricing = pricing
             app.state.http = http
             app.state.api_keys = api_keys
+            app.state.catalogue = catalogue
+            app.state.prices = prices
             app.state.deps = deps
             app.state.ctx = await factory(deps)
             app.state.key_testers = (
@@ -151,7 +184,12 @@ def create_app(
                 else default_key_testers(settings, http)
             )
             # Always built, so Refresh now can use run_now() even with the schedule switched off.
-            scheduler = Scheduler(app.state.ctx, nightly_fn=taste.nightly)
+            if catalogue.is_stale():
+                # Never blocks start-up; refresh() logs and keeps the last good copy on failure.
+                task = asyncio.create_task(_refresh(catalogue), name="catalogue-refresh")
+                background.add(task)
+                task.add_done_callback(background.discard)
+            scheduler = Scheduler(app.state.ctx, nightly_fn=nightly_jobs(catalogue))
             if settings.scheduler_enabled:
                 scheduler.start()
             app.state.scheduler = scheduler

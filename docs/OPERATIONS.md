@@ -94,6 +94,12 @@ Recovery: an interrupted deploy leaves `current` on the new commit with no log e
   make health
   ```
 
+## Model catalogue and prices
+
+- Anthropic and TypeSafe prices come from `config/pricing.yaml`. OpenRouter prices (and OpenAI prices not listed in `pricing.yaml`) come from OpenRouter's public model list (`https://openrouter.ai/api/v1/models`, no key), filtered to priced models with structured output and stored in the `settings` table as `model_catalogue`.
+- The list is refreshed at start-up when it is older than 24 hours (in the background) and nightly after 03:30. A failed fetch is logged (`model catalogue refresh failed`) and the last good copy is kept; with no copy at all, only `pricing.yaml` models are usable.
+- Spend from OpenRouter is recorded at the cost OpenRouter reports for each call.
+
 ## Known limitations
 
 - **Global login lockout.** The app runs uvicorn with `--no-proxy-headers`, so it never trusts `X-Forwarded-*` (any container on the shared `proxy` network could forge them). Because it cannot tell clients apart, the login limiter is global: 5 wrong passwords in 15 minutes, from anyone, lock the login for everyone until the oldest failure is 15 minutes old (the page says how long to wait). Redirects are relative paths and the `__Host-` cookies are always `Secure`, so neither depends on the forwarded scheme; a trailing-slash URL (such as `/settings/`) is a 404, never an `http://` redirect. Trade-off, accepted for a single-owner lab tool: a co-tenant container on the `proxy` network (or anyone in the lab subnet) can lock the owner out for up to 15 minutes by guessing wrong.

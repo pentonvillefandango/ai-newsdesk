@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.models import Usage
 from ai_newsdesk.pricing import Pricing
 from ai_newsdesk.protocols import Clock
@@ -26,9 +27,13 @@ class Budget:
         clock: Clock,
         runtime: RuntimeSettings,
         tz: str = "Europe/London",
+        *,
+        prices: PriceBook | None = None,
     ) -> None:
         self.store = store
         self.pricing = pricing
+        # Prices by (provider, model); without a catalogue only pricing.yaml models are priced.
+        self.prices = prices if prices is not None else PriceBook(pricing)
         self.clock = clock
         self.runtime = runtime  # replaced by the pipeline with fresh settings each run
         self.tz = tz
@@ -55,11 +60,15 @@ class Budget:
         return remaining > 0 and 0 <= worst_case_usd <= remaining
 
     def cost(self, usage: Usage) -> float:
-        """Pricing.usage_cost: cache writes at 1.25x and cache reads at 0.1x the input price."""
+        """The provider's reported cost when it gave one, else PriceBook.usage_cost."""
+        if usage.reported_cost_usd is not None:
+            return usage.reported_cost_usd
         try:
-            return self.pricing.usage_cost(usage)
+            return self.prices.usage_cost(usage)
         except KeyError:  # pricing.UnknownModelError
-            log.warning("model %s is missing from pricing.yaml; spend recorded as $0", usage.model)
+            log.warning(
+                "no price for %s model %s; spend recorded as $0", usage.provider, usage.model
+            )
             return 0.0
 
     async def record(self, usage: Usage) -> float:

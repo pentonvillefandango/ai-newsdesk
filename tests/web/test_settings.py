@@ -19,7 +19,16 @@ from ai_newsdesk.runtime_settings import (
     update_runtime_settings,
 )
 from tests.web.fakes import fake_ctx_factory
-from tests.web.support import BASE_URL, CONFIG_DIR, NOW, csrf_token, login, make_settings, run
+from tests.web.support import (
+    BASE_URL,
+    CONFIG_DIR,
+    NOW,
+    csrf_token,
+    fixture_catalogue,
+    login,
+    make_settings,
+    run,
+)
 
 SECRET = "sk-test-SECRET-123"  # gitleaks:allow
 VALID = {
@@ -183,6 +192,7 @@ def test_clear_key_falls_back_to_env(tmp_path: Path) -> None:
         key_testers={name: ok for name in API_KEY_NAMES},
         config_dir=CONFIG_DIR,
         clock=FixedClock(NOW),
+        catalogue_fetch=fixture_catalogue,
     )
     with TestClient(app, base_url=BASE_URL) as c:
         login(c)
