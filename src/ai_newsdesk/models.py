@@ -189,6 +189,22 @@ class UnscoredItem(BaseModel):
     status: ItemStatus
 
 
+class XPost(BaseModel):
+    """A post from an X account source, for the X page (never part of a Today story)."""
+
+    item_id: int
+    handle: str  # the post's author, else the source's configured handle (no @)
+    source_name: str
+    url: str
+    title: str
+    text: str  # the search snippet
+    published_at: datetime | None = None
+    fetched_at: datetime
+    signal: int | None = None
+    status: ItemStatus
+    junk: bool | None = None  # None: not judged yet
+
+
 class SourceOverview(BaseModel):
     """One row of the Sources page: the source plus its health and volume."""
 
