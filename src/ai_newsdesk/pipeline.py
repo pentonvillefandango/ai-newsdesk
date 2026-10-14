@@ -286,6 +286,18 @@ async def _judge_all(
     return []
 
 
+async def judge_inputs(
+    store: Store, queued: list[ReviewInput], now: datetime
+) -> tuple[list[ReviewInput], dict[int, int], list[tuple[int, str, int | None]]]:
+    """What the judge is sent for these items: each with its candidate stories. Also returns
+    the dedupe links and recent titles used. The Compare page sends its sample through here
+    too, so a comparison judges exactly what production would."""
+    stories = await store.open_stories(now, hours=DEDUPE_WINDOW_HOURS)
+    recent = await store.recent_titles(DEDUPE_WINDOW_HOURS)
+    links = cluster.dedupe_links(queued, recent)
+    return cluster.with_candidates(queued, stories, links), links, recent
+
+
 async def _review(
     ctx: PipelineContext, rs: RuntimeSettings, now: datetime, report: RunReport
 ) -> None:
@@ -295,13 +307,10 @@ async def _review(
     queued = await ctx.store.queued_review_inputs(limit, now)
     if not queued:
         return
-    stories = await ctx.store.open_stories(now, hours=DEDUPE_WINDOW_HOURS)
-    recent = await ctx.store.recent_titles(DEDUPE_WINDOW_HOURS)
-    links = cluster.dedupe_links(queued, recent)
+    inputs, links, recent = await judge_inputs(ctx.store, queued, now)
     # A retried review_failed item is already shown in a story; it stays there.
     queued_ids = {q.item_id for q in queued}
     current = {iid: sid for iid, _, sid in recent if iid in queued_ids and sid is not None}
-    inputs = cluster.with_candidates(queued, stories, links)
 
     verdicts: dict[int, Verdict] = {}
     failed: list[ReviewInput] = []
