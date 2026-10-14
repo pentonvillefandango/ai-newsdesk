@@ -29,7 +29,7 @@ class RuntimeSettings(BaseModel):
     runs_per_day: int = 4
     briefing_time: str = Field(default="07:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     daily_review_cap: int = Field(default=500, ge=0)
-    monthly_budget_usd: float = Field(default=5.0, ge=0)
+    monthly_budget_usd: float = Field(default=5.0, ge=0, le=1000, allow_inf_nan=False)
     judge_provider: Literal["anthropic", "typesafe"] = "anthropic"
     judge_model: str = Field(default=DEFAULT_MODEL, min_length=1)
     writer_model: str = Field(default=DEFAULT_MODEL, min_length=1)
