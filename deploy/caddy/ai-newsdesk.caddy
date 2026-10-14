@@ -1,0 +1,15 @@
+# AI Newsdesk on the shared Caddy: copy to /opt/caddy/sites/ai-newsdesk.caddy (docs/OPERATIONS.md).
+# Env (from /opt/caddy/.env): AI_NEWSDESK_HOST, LAB_SUBNET. Lab clients only; everyone else 403.
+# Caddy sets X-Forwarded-* from the real client (never configure trusted proxies here).
+# The app does not stream, so the default response buffering is fine.
+{$AI_NEWSDESK_HOST} {
+	tls internal
+
+	@lab remote_ip {$LAB_SUBNET}
+	handle @lab {
+		reverse_proxy ai-newsdesk-app:8000
+	}
+
+	# everything outside the lab subnet
+	respond 403
+}

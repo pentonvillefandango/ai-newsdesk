@@ -397,7 +397,7 @@
   {
    "id": 39,
    "subject": "Task 39: Caddy site file in the repo",
-   "status": "pending",
+   "status": "completed",
    "step": 8,
    "description": "**Goal:** A lab-only Caddy site file for ai-newsdesk, pinned by a test, merged to `main` before anything touches `/opt/caddy`.\n\n**Files:**\n- Create: `deploy/caddy/ai-newsdesk.caddy`\n- Create: `tests/test_caddy_site.py`\n\n**Acceptance Criteria:**\n- [ ] The site uses `{$AI_NEWSDESK_HOST}` and `{$LAB_SUBNET}`, `tls internal`, `handle @lab { reverse_proxy ai-newsdesk-app:8000 }` and `respond 403`.\n- [ ] No `trusted_proxies`, no `flush_interval`, no IP other than `127.0.0.1`, no `*.home.arpa` host name in the site file.\n- [ ] `docs/OPERATIONS.md` documents install (with validation), reload vs recreate, bootstrap survival and rollback.\n- [ ] `caddy validate` accepts the file with example values.\n- [ ] Merged into `main` with CI green.\n\n**Verify:** `uv run pytest tests/test_caddy_site.py -v` \u2192 8 passed; the `caddy validate` command in step 5 prints `Valid configuration`.\n\nFull steps and code: docs/plans/v1/step-8-deploy.md (Task 39). Master contract and reconciliation rules R1\u2013R9: docs/plans/2026-10-14-ai-newsdesk-v1.md.\n\n```json:metadata\n{\"files\": [\"deploy/caddy/ai-newsdesk.caddy\", \"tests/test_caddy_site.py\"], \"verifyCommand\": \"uv run pytest tests/test_caddy_site.py -v\", \"acceptanceCriteria\": [\"The site uses `{$AI_NEWSDESK_HOST}` and `{$LAB_SUBNET}`, `tls internal`, `handle @lab { reverse_proxy ai-newsdesk-app:8000 }` and `respond 403`.\", \"No `trusted_proxies`, no `flush_interval`, no IP other than `127.0.0.1`, no `*.home.arpa` host name in the site file.\", \"`docs/OPERATIONS.md` documents install (with validation), reload vs recreate, bootstrap survival and rollback.\", \"`caddy validate` accepts the file with example values.\", \"Merged into `main` with CI green.\"], \"modelTier\": \"standard\", \"step\": 8, \"stepFile\": \"docs/plans/v1/step-8-deploy.md\"}\n```",
    "blockedBy": [
@@ -442,5 +442,5 @@
    ]
   }
  ],
- "lastUpdated": "2026-10-14T10:27:58+00:00"
+ "lastUpdated": "2026-10-14T10:31:31+00:00"
 }
