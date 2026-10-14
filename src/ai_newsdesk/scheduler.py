@@ -89,6 +89,10 @@ class Scheduler:
         self._nightly_fn = nightly_fn
         self._tick_seconds = tick_seconds
         self._schedule_wait_s = schedule_wait_s
+        # Collection runs finished (any trigger, ok or not), so a scheduled run that waited
+        # behind one can tell, even one already going when it started waiting. Other lock
+        # holders (a Settings Test, a comparison) don't count.
+        self._runs_finished = 0
         self.lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
         self._last_slot: datetime | None = None
@@ -132,11 +136,16 @@ class Scheduler:
             log.info("a job is already running; %s run skipped", trigger)
             return None
         async with self.lock:
-            return await self._run_fn(self.ctx, trigger)
+            try:
+                return await self._run_fn(self.ctx, trigger)
+            finally:
+                self._runs_finished += 1
 
     async def _run_when_free(self, trigger: str) -> RunReport | None:
         """Wait for the lock, at most `schedule_wait_s`, then run; skip the slot if it stays
-        held. Lock.acquire releases again if a timeout cancels it just after acquiring."""
+        held. A timeout never leaves the lock held (Lock.acquire hands it on when cancelled).
+        If a collection run happened while waiting, this slot is skipped: it would find little."""
+        runs_before = self._runs_finished
         try:
             await asyncio.wait_for(self.lock.acquire(), self._schedule_wait_s)
         except TimeoutError:
@@ -145,7 +154,13 @@ class Scheduler:
             )
             return None
         try:
-            return await self._run_fn(self.ctx, trigger)
+            if self._runs_finished != runs_before:
+                log.info("a run finished while waiting; %s run skipped", trigger)
+                return None
+            try:
+                return await self._run_fn(self.ctx, trigger)
+            finally:
+                self._runs_finished += 1
         finally:
             self.lock.release()
 

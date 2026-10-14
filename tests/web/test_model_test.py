@@ -178,12 +178,14 @@ async def test_a_test_that_never_answers_times_out(monkeypatch: pytest.MonkeyPat
     result = await _test("openrouter", "google/gemini-3.8-flash", Clients(slow), budget)
     assert time.perf_counter() - started < 1
     assert result.called and not result.ok
-    assert result.message == "The model didn't answer within 30 seconds."
+    assert result.message == model_test.timeout_message()  # built from the patched limit
+    assert result.message == "The model didn't answer within 0.05 seconds."
     assert len(slow.calls) == 1 and budget.recorded == []
 
 
 def test_the_test_timeout_is_30_seconds() -> None:
     assert model_test.TEST_TIMEOUT_S == 30
+    assert model_test.timeout_message() == "The model didn't answer within 30 seconds."
 
 
 async def test_an_unusable_client_is_refused() -> None:

@@ -30,7 +30,12 @@ TEST_MAX_TOKENS = 512
 # The Test holds the pipeline lock: a provider that accepts the call and then stalls must not
 # hold it (and delay a scheduled run) for the SDK's 10-minute default.
 TEST_TIMEOUT_S = 30
-TIMEOUT_MESSAGE = "The model didn't answer within 30 seconds."
+
+
+def timeout_message() -> str:
+    return f"The model didn't answer within {TEST_TIMEOUT_S:g} seconds."
+
+
 TEST_SYSTEM = (
     "You are answering a connection test. Reply with the JSON object the schema asks for,"
     " with ok set to true."
@@ -123,7 +128,7 @@ async def run_model_test(
         return refused(str(exc))
     cost = await budget.record(result.usage) if result.usage is not None else None
     if timed_out:
-        message = TIMEOUT_MESSAGE
+        message = timeout_message()
     elif result.parsed is not None:
         message = "It works."
     elif result.refused:

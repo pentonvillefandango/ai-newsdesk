@@ -265,3 +265,68 @@ def test_the_default_schedule_wait_is_20_minutes() -> None:
     from ai_newsdesk.scheduler import SCHEDULE_LOCK_WAIT_S
 
     assert SCHEDULE_LOCK_WAIT_S == 20 * 60
+
+
+async def test_a_scheduled_run_after_a_manual_run_while_waiting_is_skipped(
+    store: Store, caplog: object
+) -> None:
+    """Review R4: a full collection run just happened, so the slot's run would find little."""
+    import logging
+
+    import pytest
+
+    assert isinstance(caplog, pytest.LogCaptureFixture)
+    release = asyncio.Event()
+    runs: list[str] = []
+
+    async def slow_run(ctx: PipelineContext, trigger: str) -> RunReport:
+        runs.append(trigger)
+        if trigger == "manual":
+            await release.wait()
+        return RunReport(run_id=len(runs))
+
+    sched = Scheduler(
+        make_ctx(store, MutableClock(datetime(2026, 10, 14, 9, 0, tzinfo=UTC))),
+        run_fn=slow_run,
+        schedule_wait_s=5.0,
+    )
+    manual = asyncio.create_task(sched.run_now("manual"))
+    await asyncio.sleep(0.01)
+    scheduled = asyncio.create_task(sched.run_now("schedule"))
+    await asyncio.sleep(0.01)
+    release.set()
+    with caplog.at_level(logging.INFO):
+        assert await asyncio.wait_for(manual, 1) is not None
+        assert await asyncio.wait_for(scheduled, 1) is None
+    assert runs == ["manual"]
+    assert "a run finished while waiting; schedule run skipped" in caplog.text
+    assert not sched.lock.locked()
+
+
+async def test_a_scheduled_run_after_a_non_run_holder_still_runs(store: Store) -> None:
+    """A Settings Test or a comparison holds the lock without collecting: the slot still runs."""
+    rec = Recorder()
+    sched = scheduler_for(
+        store, MutableClock(datetime(2026, 10, 14, 9, 0, tzinfo=UTC)), rec, schedule_wait_s=5.0
+    )
+    async with sched.lock:  # e.g. the Test button
+        scheduled = asyncio.create_task(sched.run_now("schedule"))
+        await asyncio.sleep(0.01)
+    assert await asyncio.wait_for(scheduled, 1) is not None
+    assert rec.runs == ["schedule"]
+
+
+async def test_shutdown_during_the_scheduled_wait(store: Store) -> None:
+    """Review N6: stop() returns, nothing runs, and the holder keeps the lock."""
+    rec = Recorder()
+    clock = MutableClock(datetime(2026, 10, 14, 9, 0, tzinfo=UTC))
+    sched = scheduler_for(store, clock, rec, schedule_wait_s=60.0, tick_seconds=0.01)
+    sched._last_slot = datetime(2026, 10, 13, 0, 0, tzinfo=UTC)  # a slot is due
+    await sched.lock.acquire()  # the holder (e.g. a Test)
+    sched.start()
+    await asyncio.sleep(0.05)  # the tick is now waiting for the lock
+    await asyncio.wait_for(sched.stop(), 1)
+    assert rec.runs == []
+    assert sched.lock.locked()  # still ours, not taken by the cancelled waiter
+    sched.lock.release()
+    assert not sched.lock.locked()

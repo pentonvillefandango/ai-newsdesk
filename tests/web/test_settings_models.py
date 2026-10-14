@@ -685,7 +685,7 @@ def test_a_hung_test_times_out_and_frees_the_run_lock(
         writer_model_other="",
     )
     r = _post(tclient, "/settings/models/test", form, headers=HX)
-    assert "The model didn&#39;t answer within 30 seconds." in r.text
+    assert "The model didn&#39;t answer within 0.05 seconds." in r.text
     assert not tapp.state.run_lock.locked()
 
 
