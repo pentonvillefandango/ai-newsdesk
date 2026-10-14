@@ -14,7 +14,7 @@ A self-hosted, high-signal AI news feed. It collects news from AI labs and from 
 - Each AI job (judge, summary writer, briefing writer, duplicate merger) can use its own provider: Anthropic (default), OpenAI or OpenRouter. Settings offers a priced shortlist (`config/models.yaml`), any other priced model with structured output by typing its id, and a Test button that makes one tiny, budget-checked call.
 - A Compare page runs 2 to 4 models over the same recent news with the production prompts, under its own spend cap, and shows how they differ: agreement with the current judge, your thumbs and your labels, or summaries side by side. One click makes the winner the production model.
 - Settings page: run frequency, caps, models, write-only API keys (each tested before it is saved), spend meter, cost estimates priced with the chosen models.
-- Wide "lead + grid" layout on desktop, single column on phones; an Auto / Light / Dark theme toggle remembered per browser.
+- Wide "lead + grid" layout on desktop, single column on phones; an Auto / Light / Dark theme toggle and a choice of six accent colours (Amber, Blue, Green, Violet, Rose, Teal), both remembered per browser.
 - One owner password; lab-only behind a shared Caddy with HTTPS.
 
 ## Quick start

@@ -1,6 +1,7 @@
 /* ai-newsdesk: "First light".
    A cool, quiet morning paper. Book-serif headlines, system sans for everything else.
-   One accent (first-light amber) and it means one thing: signal. */
+   One accent (first-light amber by default; the owner can pick another) and it means one thing:
+   signal. */
 
 /* ---------- Tokens ---------- */
 :root {
@@ -16,7 +17,7 @@
   --rule-strong: #aab6c2;
   --track: #dce3e9;
   --accent: #9f5b00;
-  --accent-wash: #f5e6cd;
+  --accent-wash: #f9eedc;
   --on-ink: #f7f9fb;
   --danger: #a3322a;
   --danger-wash: #f7e1de;
@@ -104,6 +105,120 @@
   --danger-wash: #3a1f1e;
   --ok: #7cc4a0;
   --ok-wash: #183026;
+}
+
+/* Accent colour. theme.js sets data-accent on <html> (amber when nothing is stored); only
+   --accent and --accent-wash change. Each swatch in the picker shows its own accent in the
+   current theme, so the swatch classes share the blocks. Amber repeats the base tokens. Every
+   pair is checked for WCAG AA by a test (text on the page, the surface and the wash). */
+:root[data-accent="amber"],
+.swatch--amber {
+  --accent: #9f5b00;
+  --accent-wash: #f9eedc;
+}
+
+:root[data-accent="blue"],
+.swatch--blue {
+  --accent: #1f5fa6;
+  --accent-wash: #dde8f5;
+}
+
+:root[data-accent="green"],
+.swatch--green {
+  --accent: #2d6a3c;
+  --accent-wash: #dcede0;
+}
+
+:root[data-accent="violet"],
+.swatch--violet {
+  --accent: #6a46ad;
+  --accent-wash: #e8e1f5;
+}
+
+:root[data-accent="rose"],
+.swatch--rose {
+  --accent: #a83259;
+  --accent-wash: #f6dfe6;
+}
+
+:root[data-accent="teal"],
+.swatch--teal {
+  --accent: #136a6e;
+  --accent-wash: #d5ecec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="amber"]:not([data-theme="light"]),
+  :root:not([data-theme="light"]) .swatch--amber {
+    --accent: #e2a63c;
+    --accent-wash: #2f2817;
+  }
+
+  :root[data-accent="blue"]:not([data-theme="light"]),
+  :root:not([data-theme="light"]) .swatch--blue {
+    --accent: #79aef0;
+    --accent-wash: #182a40;
+  }
+
+  :root[data-accent="green"]:not([data-theme="light"]),
+  :root:not([data-theme="light"]) .swatch--green {
+    --accent: #72c48a;
+    --accent-wash: #17301f;
+  }
+
+  :root[data-accent="violet"]:not([data-theme="light"]),
+  :root:not([data-theme="light"]) .swatch--violet {
+    --accent: #b9a0f2;
+    --accent-wash: #2a2242;
+  }
+
+  :root[data-accent="rose"]:not([data-theme="light"]),
+  :root:not([data-theme="light"]) .swatch--rose {
+    --accent: #f290ad;
+    --accent-wash: #3a1e29;
+  }
+
+  :root[data-accent="teal"]:not([data-theme="light"]),
+  :root:not([data-theme="light"]) .swatch--teal {
+    --accent: #5fc6c6;
+    --accent-wash: #123234;
+  }
+}
+
+:root[data-theme="dark"][data-accent="amber"],
+:root[data-theme="dark"] .swatch--amber {
+  --accent: #e2a63c;
+  --accent-wash: #2f2817;
+}
+
+:root[data-theme="dark"][data-accent="blue"],
+:root[data-theme="dark"] .swatch--blue {
+  --accent: #79aef0;
+  --accent-wash: #182a40;
+}
+
+:root[data-theme="dark"][data-accent="green"],
+:root[data-theme="dark"] .swatch--green {
+  --accent: #72c48a;
+  --accent-wash: #17301f;
+}
+
+:root[data-theme="dark"][data-accent="violet"],
+:root[data-theme="dark"] .swatch--violet {
+  --accent: #b9a0f2;
+  --accent-wash: #2a2242;
+}
+
+:root[data-theme="dark"][data-accent="rose"],
+:root[data-theme="dark"] .swatch--rose {
+  --accent: #f290ad;
+  --accent-wash: #3a1e29;
+}
+
+:root[data-theme="dark"][data-accent="teal"],
+:root[data-theme="dark"] .swatch--teal {
+  --accent: #5fc6c6;
+  --accent-wash: #123234;
 }
 
 /* ---------- Base ---------- */
@@ -323,6 +438,77 @@ code {
   color: var(--on-ink);
 }
 
+/* Accent picker: a round button showing the current accent; it opens a small menu of six
+   swatches. Hidden without theme.js, like the theme toggle. */
+.accent {
+  display: none;
+  position: relative;
+}
+
+:root[data-theme-ready] .accent {
+  display: inline-flex;
+}
+
+.accent__toggle {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.accent__toggle:hover {
+  border-color: var(--rule-strong);
+}
+
+.accent__current {
+  width: 1rem;
+  height: 1rem;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.accent__menu {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(6, 1.75rem);
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  box-shadow: 0 6px 20px color-mix(in oklab, var(--ink) 16%, transparent);
+}
+
+.accent__menu[hidden] {
+  display: none;
+}
+
+.swatch {
+  appearance: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  cursor: pointer;
+}
+
+.swatch[aria-pressed="true"] {
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 4px var(--ink);
+}
+
 @media (max-width: 40rem) {
   .masthead__inner {
     justify-content: space-between;
@@ -338,6 +524,9 @@ code {
   .theme {
     order: 1;
     margin-left: auto;
+  }
+  .accent {
+    order: 1;
   }
   .logout {
     order: 2;
@@ -2336,8 +2525,13 @@ select:focus-visible {
   }
   .thumb[aria-pressed="true"],
   .label-button[aria-pressed="true"],
-  .theme button[aria-pressed="true"] {
+  .theme button[aria-pressed="true"],
+  .swatch[aria-pressed="true"] {
     outline: 2px solid Highlight;
+  }
+  .swatch,
+  .accent__current {
+    forced-color-adjust: none;
   }
   .meter__fill,
   .chart__bar {

@@ -271,3 +271,105 @@ def test_settings_js_is_plain_and_optional() -> None:
     assert '"use strict"' in js
     for banned in ("eval(", "innerHTML", "new Function", "document.write", "fetch("):
         assert banned not in js, banned
+
+
+# ---- Accent colour (feedback-2) -----------------------------------------------------------------
+
+ACCENTS = ("amber", "blue", "green", "violet", "rose", "teal")
+ACCENT_LABELS = {a: a.capitalize() for a in ACCENTS}
+
+
+def _tokens(body: str) -> dict[str, str]:
+    return dict(re.findall(r"--([\w-]+):\s*(#[0-9a-fA-F]{6});", body))
+
+
+def _selector_rule(css: str, selector: str) -> str:
+    """The body of the rule whose selector list includes `selector`."""
+    match = re.search(rf"(?:^|[\n,])\s*{re.escape(selector)}\s*[,{{][^{{]*\{{([^}}]*)\}}", css)
+    assert match, selector
+    return match.group(1)
+
+
+def _accent_palettes() -> dict[tuple[str, str], dict[str, str]]:
+    """(accent, theme) -> its --accent and --accent-wash, with the theme's page colours."""
+    css = (STATIC_DIR / "app.css").read_text()
+    light_base = _tokens(css.split(DARK_MEDIA)[0])
+    dark_base = _tokens(_rule(css, ':root[data-theme="dark"]'))
+    auto_dark = "\n".join(_media_blocks(css, "(prefers-color-scheme: dark)"))
+    out: dict[tuple[str, str], dict[str, str]] = {}
+    for accent in ACCENTS:
+        light = _tokens(_selector_rule(css, f':root[data-accent="{accent}"]'))
+        dark = _tokens(_selector_rule(css, f':root[data-theme="dark"][data-accent="{accent}"]'))
+        device = _tokens(
+            _selector_rule(auto_dark, f':root[data-accent="{accent}"]:not([data-theme="light"])')
+        )
+        assert set(light) == set(dark) == {"accent", "accent-wash"}, accent
+        assert device == dark, accent  # the device-dark copy matches the forced-dark one
+        out[(accent, "light")] = {**light_base, **light}
+        out[(accent, "dark")] = {**dark_base, **dark}
+    return out
+
+
+def test_stylesheet_has_six_accents_for_both_themes() -> None:
+    palettes = _accent_palettes()
+    assert len(palettes) == 12
+    css = (STATIC_DIR / "app.css").read_text()
+    light_base = _tokens(css.split(DARK_MEDIA)[0])
+    dark_base = _tokens(_rule(css, ':root[data-theme="dark"]'))
+    # Amber is the default: its blocks repeat the base tokens, so no attribute means amber.
+    for key in ("accent", "accent-wash"):
+        assert palettes[("amber", "light")][key] == light_base[key]
+        assert palettes[("amber", "dark")][key] == dark_base[key]
+    # Six distinct accents per theme.
+    for theme in ("light", "dark"):
+        assert len({palettes[(a, theme)]["accent"] for a in ACCENTS}) == 6
+
+
+def test_every_accent_meets_wcag_aa_in_both_themes() -> None:
+    for (accent, theme), t in _accent_palettes().items():
+        where = f"{accent}/{theme}"
+        for bg in ("paper", "surface", "accent-wash"):  # accent text is drawn on all three
+            assert _contrast(t["accent"], t[bg]) >= 4.5, f"{where} on {bg}"
+        assert _contrast(t["on-ink"], t["accent"]) >= 4.5, f"{where} under on-ink text"
+        assert _contrast(t["accent"], t["paper"]) >= 3, f"{where} focus ring"
+
+
+def test_accent_is_the_only_colour_that_changes() -> None:
+    css = (STATIC_DIR / "app.css").read_text()
+    for accent in ACCENTS:
+        for selector in (
+            f':root[data-accent="{accent}"]',
+            f':root[data-theme="dark"][data-accent="{accent}"]',
+        ):
+            names = re.findall(r"(--[\w-]+):", _selector_rule(css, selector))
+            assert names == ["--accent", "--accent-wash"], selector
+
+
+def test_base_template_has_the_accent_control_next_to_the_theme() -> None:
+    html = templates.get_template("base.html").render(
+        csrf_token="tok", active="today", budget_reached=False
+    )
+    assert html.index('class="theme"') < html.index('class="accent"') < html.index('"logout"')
+    assert (
+        '<button type="button" class="accent__toggle" data-accent-toggle aria-expanded="false"'
+        ' aria-controls="accent-menu" aria-label="Accent colour">' in html
+    )
+    menu = '<div class="accent__menu" id="accent-menu" role="group" aria-label="Accent" hidden>'
+    assert menu in html
+    for accent in ACCENTS:
+        assert (
+            f'<button type="button" class="swatch swatch--{accent}"'
+            f' data-accent-choice="{accent}" aria-pressed="{str(accent == "amber").lower()}"'
+            f' aria-label="Accent: {ACCENT_LABELS[accent]}"></button>' in html
+        )
+
+
+def test_theme_js_sets_the_accent_safely_with_amber_by_default() -> None:
+    js = (STATIC_DIR / "theme.js").read_text()
+    assert 'var ACCENTS = ["amber", "blue", "green", "violet", "rose", "teal"];' in js
+    # load() falls back to the first choice: amber when nothing (or junk) is stored.
+    assert "return choices.indexOf(value) === -1 ? choices[0] : value;" in js
+    assert "load(ACCENT_KEY, ACCENTS)" in js
+    assert "root.dataset.accent = choice" in js
+    assert 'save(ACCENT_KEY, choice, "amber")' in js
+    assert "eval" not in js and "innerHTML" not in js
