@@ -1,5 +1,5 @@
-"""Validation for the Sources and Settings forms. Returns clean values plus field errors; never
-raises."""
+"""Validation for the Sources, Settings and Models forms. Returns clean values plus field
+errors; never raises."""
 
 from __future__ import annotations
 
@@ -143,30 +143,9 @@ class SettingsForm:
         return not self.errors
 
 
-def parse_settings_form(
-    form: Mapping[str, str],
-    *,
-    current: RuntimeSettings,
-    prices: PriceBook,
-    catalogue: Catalogue | None,
-    keys: Collection[str],
-) -> SettingsForm:
-    """Validate the runtime-settings form. ``values`` holds typed values for valid fields only.
-
-    Each AI job's (provider, model) pair goes through validate_model_choice, and a provider
-    that needs a key must have one (``keys``: the names that resolve). A job whose fields are
-    not in the form keeps its saved values (``current``); a posted model without a posted
-    provider is checked against the saved provider. A filled ``<job>_model_other`` box wins
-    over the ``<job>_model`` select.
-    """
-    form = {
-        **form,
-        **{
-            f"{job}_model": effective_model(form, job)
-            for job in ("judge", *MODEL_JOBS)
-            if f"{job}_model_other" in form
-        },
-    }
+def parse_settings_form(form: Mapping[str, str]) -> SettingsForm:
+    """Validate the Settings form (schedule, budget, reading). ``values`` holds typed values for
+    valid fields only. Model fields are not read: they belong to the Models form."""
     result = SettingsForm()
     values, errors = result.values, result.errors
 
@@ -209,6 +188,36 @@ def parse_settings_form(
 
     integer("show_threshold", 0, 10, "Enter a whole number from 0 to 10.")
     integer("hn_min_points", 0, 10000, "Enter a whole number from 0 to 10000.")
+    values["why_it_matters"] = form.get("why_it_matters") == "on"
+    return result
+
+
+def parse_models_form(
+    form: Mapping[str, str],
+    *,
+    current: RuntimeSettings,
+    prices: PriceBook,
+    catalogue: Catalogue | None,
+    keys: Collection[str],
+) -> SettingsForm:
+    """Validate the Models form: each AI job's (provider, model). ``values`` holds typed values
+    for valid fields only.
+
+    Each pair goes through validate_model_choice, and a provider that needs a key must have one
+    (``keys``: the names that resolve). A job whose fields are not in the form keeps its saved
+    values (``current``); a posted model without a posted provider is checked against the saved
+    provider. A filled ``<job>_model_other`` box wins over the ``<job>_model`` select.
+    """
+    form = {
+        **form,
+        **{
+            f"{job}_model": effective_model(form, job)
+            for job in ("judge", *MODEL_JOBS)
+            if f"{job}_model_other" in form
+        },
+    }
+    result = SettingsForm()
+    values, errors = result.values, result.errors
 
     def model_choice(job: str, provider: str, model: str) -> None:
         error = validate_model_choice(provider, model, pricebook=prices, catalogue=catalogue)
@@ -247,6 +256,4 @@ def parse_settings_form(
             model_choice(job, provider, form[f"{job}_model"].strip())
         elif f"{job}_provider" in form:  # a new provider with the saved model: check the pair
             model_choice(job, provider, getattr(current, f"{job}_model"))
-
-    values["why_it_matters"] = form.get("why_it_matters") == "on"
     return result

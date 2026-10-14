@@ -1,4 +1,4 @@
-"""Settings' Models section (multi-provider 3.5): per-job provider and model rows, manual
+"""The Models page (multi-provider 3.5): per-job provider and model rows, manual
 entry, the Test button, the judge warning and the model-list refresh."""
 
 from __future__ import annotations
@@ -50,10 +50,11 @@ async def _drain(app: FastAPI) -> None:
 
 
 class _Form(HTMLParser):
-    """What a browser would submit for the form whose action is /settings, unchanged."""
+    """What a browser would submit for the form with this action, unchanged."""
 
-    def __init__(self) -> None:
+    def __init__(self, action: str) -> None:
         super().__init__()
+        self._action = action
         self.fields: dict[str, str] = {}
         self._in_form = False
         self._select: str | None = None
@@ -64,7 +65,7 @@ class _Form(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         a = dict(attrs)
         if tag == "form":
-            self._in_form = a.get("action") == "/settings"
+            self._in_form = a.get("action") == self._action
         if not self._in_form:
             return
         name = a.get("name")
@@ -93,10 +94,14 @@ class _Form(HTMLParser):
             self._select = None
 
 
-def browser_form(html: str) -> dict[str, str]:
-    parser = _Form()
+def browser_form(html: str, action: str = "/models") -> dict[str, str]:
+    parser = _Form(action)
     parser.feed(html)
     return parser.fields
+
+
+def settings_form(html: str) -> dict[str, str]:
+    return browser_form(html, "/settings")
 
 
 def _post(client: TestClient, path: str, data: dict[str, str], **kw: Any) -> Any:
@@ -119,7 +124,7 @@ def _settings(client: TestClient, app: FastAPI) -> RuntimeSettings:
 
 def test_one_row_per_job_with_its_providers(app: FastAPI, client: TestClient) -> None:
     run(client, _drain, app)
-    page = client.get("/settings").text
+    page = client.get("/models").text
     for job, label in (
         ("judge", "Judge"),
         ("writer", "Summary writer"),
@@ -137,13 +142,13 @@ def test_one_row_per_job_with_its_providers(app: FastAPI, client: TestClient) ->
         assert values == expected, job
         assert f'name="{job}_model"' in page
         assert f'name="{job}_model_other"' in page
-        assert f'formaction="/settings/models/test" name="test_job" value="{job}"' in page
+        assert f'formaction="/models/test" name="test_job" value="{job}"' in page
     assert "TypeSafe (Jev)" in page
 
 
 def test_shortlists_with_prices_and_datalists(app: FastAPI, client: TestClient) -> None:
     run(client, _drain, app)  # the start-up catalogue refresh (fixture)
-    page = client.get("/settings").text
+    page = client.get("/models").text
     assert "claude-haiku-5-5 ($0.1 in, $0.5 out per million tokens)" in page
     assert "google/gemini-3.8-flash ($0.75 in, $3.75 out per million tokens)" in page
     assert "gpt-5.4-nano ($0.2 in, $1.25 out per million tokens)" in page
@@ -160,11 +165,11 @@ def test_shortlists_with_prices_and_datalists(app: FastAPI, client: TestClient) 
 
 
 def test_catalogue_age_and_refresh_button(app: FastAPI, client: TestClient) -> None:
-    page = client.get("/settings").text
+    page = client.get("/models").text
     run(client, _drain, app)
-    page = client.get("/settings").text
+    page = client.get("/models").text
     assert "Model list updated just now" in page
-    assert 'action="/settings/models/refresh"' in page
+    assert 'action="/models/refresh"' in page
     assert "Refresh model list" in page
 
 
@@ -176,7 +181,7 @@ def test_model_list_not_loaded_yet(tmp_path: Path) -> None:
     with TestClient(app, base_url=BASE_URL) as c:
         login(c)
         run(c, _drain, app)
-        assert "Model list not loaded yet" in c.get("/settings").text
+        assert "Model list not loaded yet" in c.get("/models").text
 
 
 # ---- saving ----------------------------------------------------------------------------------
@@ -199,10 +204,10 @@ def test_saving_an_unchanged_page_keeps_every_provider_and_model(
         "consolidator_model": "claude-sonnet-5-5",
     }
     run(client, update_runtime_settings, app.state.store, **chosen)
-    form = browser_form(client.get("/settings").text)
+    form = browser_form(client.get("/models").text)
     assert form["briefing_model_other"] == "example/costly-cache-write"
     assert form["judge_model"] == "google/gemini-3.8-flash" and form["judge_model_other"] == ""
-    r = _post(client, "/settings", form)
+    r = _post(client, "/models", form)
     assert r.status_code == 303, r.text
     saved = _settings(client, app)
     assert {k: getattr(saved, k) for k in chosen} == chosen
@@ -210,7 +215,7 @@ def test_saving_an_unchanged_page_keeps_every_provider_and_model(
 
 def test_saving_the_defaults_unchanged(app: FastAPI, client: TestClient) -> None:
     before = _settings(client, app)
-    r = _post(client, "/settings", browser_form(client.get("/settings").text))
+    r = _post(client, "/models", browser_form(client.get("/models").text))
     assert r.status_code == 303, r.text
     after = _settings(client, app)
     for job in JOBS:
@@ -222,27 +227,27 @@ def test_saving_the_defaults_unchanged(app: FastAPI, client: TestClient) -> None
 def test_an_openrouter_judge_is_kept(app: FastAPI, client: TestClient) -> None:
     run(client, _drain, app)
     _save_keys(client)
-    form = browser_form(client.get("/settings").text)
+    form = browser_form(client.get("/models").text)
     form.update(judge_provider="openrouter", judge_model="google/gemini-3.8-flash")
-    assert _post(client, "/settings", form).status_code == 303
+    assert _post(client, "/models", form).status_code == 303
     saved = _settings(client, app)
     assert (saved.judge_provider, saved.judge_model) == ("openrouter", "google/gemini-3.8-flash")
-    again = browser_form(client.get("/settings").text)
+    again = browser_form(client.get("/models").text)
     assert again["judge_provider"] == "openrouter"
-    assert _post(client, "/settings", again).status_code == 303
+    assert _post(client, "/models", again).status_code == 303
     assert _settings(client, app).judge_provider == "openrouter"
 
 
 def test_the_typed_model_wins_over_the_list(app: FastAPI, client: TestClient) -> None:
     run(client, _drain, app)
     _save_keys(client)
-    form = browser_form(client.get("/settings").text)
+    form = browser_form(client.get("/models").text)
     form.update(
         writer_provider="openrouter",
         writer_model="anthropic/claude-haiku-5.5",  # the list's choice loses
         writer_model_other=" example/costly-cache-write ",
     )
-    assert _post(client, "/settings", form).status_code == 303
+    assert _post(client, "/models", form).status_code == 303
     saved = _settings(client, app)
     assert (saved.writer_provider, saved.writer_model) == (
         "openrouter",
@@ -252,7 +257,7 @@ def test_the_typed_model_wins_over_the_list(app: FastAPI, client: TestClient) ->
 
 def test_errors_are_shown_next_to_their_row(app: FastAPI, client: TestClient) -> None:
     run(client, _drain, app)
-    form = browser_form(client.get("/settings").text)
+    form = browser_form(client.get("/models").text)
     form.update(
         briefing_provider="openrouter",
         briefing_model="",
@@ -260,7 +265,7 @@ def test_errors_are_shown_next_to_their_row(app: FastAPI, client: TestClient) ->
         consolidator_provider="openai",
         consolidator_model="gpt-5.4-nano",
     )
-    r = _post(client, "/settings", form)
+    r = _post(client, "/models", form)
     assert r.status_code == 422
     page = r.text
     assert 'id="briefing_model-error"' in page
@@ -284,9 +289,9 @@ def test_errors_are_shown_next_to_their_row(app: FastAPI, client: TestClient) ->
 
 def test_judge_warning_shown_only_off_haiku(app: FastAPI, client: TestClient) -> None:
     warning = JUDGE_WARNING.replace("'", "&#39;")
-    assert warning not in client.get("/settings").text
+    assert warning not in client.get("/models").text
     run(client, update_runtime_settings, app.state.store, judge_model="claude-sonnet-5-5")
-    assert warning in client.get("/settings").text
+    assert warning in client.get("/models").text
     run(
         client,
         update_runtime_settings,
@@ -294,7 +299,7 @@ def test_judge_warning_shown_only_off_haiku(app: FastAPI, client: TestClient) ->
         judge_provider="typesafe",
         judge_model="jev-1.13.0",
     )
-    assert warning in client.get("/settings").text
+    assert warning in client.get("/models").text
 
 
 # ---- the Test button -------------------------------------------------------------------------
@@ -361,7 +366,7 @@ def tclient(tapp: FastAPI) -> Iterator[TestClient]:
 
 
 def _test_form(client: TestClient, job: str, **row: str) -> dict[str, str]:
-    form = browser_form(client.get("/settings").text)
+    form = browser_form(client.get("/models").text)
     form.update(row)
     form["test_job"] = job
     return form
@@ -370,7 +375,7 @@ def _test_form(client: TestClient, job: str, **row: str) -> dict[str, str]:
 def test_the_test_button_needs_csrf(tclient: TestClient, provider: Provider) -> None:
     form = _test_form(tclient, "writer")
     del form["csrf_token"]
-    r = tclient.post("/settings/models/test", data=form, follow_redirects=False)
+    r = tclient.post("/models/test", data=form, follow_redirects=False)
     assert r.status_code == 403
     assert provider.requests == []
 
@@ -383,7 +388,7 @@ def test_a_missing_key_is_refused_without_a_call(tclient: TestClient, provider: 
         writer_model="gpt-5.4-nano",
         writer_model_other="",
     )
-    r = _post(tclient, "/settings/models/test", form, headers=HX)
+    r = _post(tclient, "/models/test", form, headers=HX)
     assert r.status_code == 200
     assert "Add your OpenAI API key first." in r.text
     assert "Not tested" in r.text
@@ -398,7 +403,7 @@ def test_an_invalid_model_is_refused_without_a_call(
     form = _test_form(
         tclient, "judge", judge_provider="openrouter", judge_model_other="nobody/unknown"
     )
-    r = _post(tclient, "/settings/models/test", form, headers=HX)
+    r = _post(tclient, "/models/test", form, headers=HX)
     assert "isn&#39;t in the OpenRouter model list" in r.text
     assert provider.requests == []
 
@@ -414,7 +419,7 @@ def test_an_unaffordable_test_is_refused(
         writer_provider="openrouter",
         writer_model_other="google/gemini-3.8-flash",
     )
-    r = _post(tclient, "/settings/models/test", form, headers=HX)
+    r = _post(tclient, "/models/test", form, headers=HX)
     assert "budget can&#39;t cover a test call" in r.text
     assert provider.requests == []
 
@@ -430,7 +435,7 @@ def test_a_working_model_records_its_spend(
         briefing_model="google/gemini-3.8-flash",
         briefing_model_other="",
     )
-    r = _post(tclient, "/settings/models/test", form, headers=HX)
+    r = _post(tclient, "/models/test", form, headers=HX)
     assert r.status_code == 200
     assert "It works." in r.text
     assert " ms" in r.text
@@ -460,7 +465,7 @@ def test_a_provider_error_is_scrubbed(
         writer_model="gpt-5.4-nano",
         writer_model_other="",
     )
-    r = _post(tclient, "/settings/models/test", form, headers=HX)
+    r = _post(tclient, "/models/test", form, headers=HX)
     assert "It failed: HTTP 401 (AuthenticationError)." in r.text
     assert OPENAI_KEY not in r.text and "Incorrect API key" not in r.text
     assert len(provider.requests) == 1
@@ -477,19 +482,19 @@ def test_without_javascript_the_result_follows_a_redirect(
         consolidator_model="google/gemini-3.8-flash",
         consolidator_model_other="",
     )
-    r = _post(tclient, "/settings/models/test", form)
+    r = _post(tclient, "/models/test", form)
     assert r.status_code == 303
-    assert r.headers["location"] == "/settings?tested=consolidator#model-consolidator"
+    assert r.headers["location"] == "/models?tested=consolidator#model-consolidator"
     page = tclient.get(r.headers["location"]).text
     result = re.search(r'id="test-consolidator".*?</div>', page, re.S)
     assert result is not None and "It works." in result.group(0)
     assert "google/gemini-3.8-flash" in result.group(0)
-    assert "It works." not in tclient.get("/settings").text  # only right after the test
+    assert "It works." not in tclient.get("/models").text  # only right after the test
 
 
 def test_an_unknown_job_is_404(tclient: TestClient) -> None:
     form = _test_form(tclient, "painter")
-    assert _post(tclient, "/settings/models/test", form).status_code == 404
+    assert _post(tclient, "/models/test", form).status_code == 404
 
 
 # ---- refresh model list ----------------------------------------------------------------------
@@ -497,9 +502,9 @@ def test_an_unknown_job_is_404(tclient: TestClient) -> None:
 
 def test_refresh_model_list_reports_success(app: FastAPI, client: TestClient) -> None:
     run(client, _drain, app)
-    r = _post(client, "/settings/models/refresh", {})
+    r = _post(client, "/models/refresh", {})
     assert r.status_code == 303
-    assert r.headers["location"] == "/settings?models=refreshed#models"
+    assert r.headers["location"] == "/models?list=refreshed#models"
     assert "Model list refreshed." in client.get(r.headers["location"]).text
 
 
@@ -517,8 +522,8 @@ def test_a_failed_refresh_keeps_the_previous_list(tmp_path: Path) -> None:
         login(c)
         run(c, _drain, app)
         before = app.state.catalogue.current
-        r = _post(c, "/settings/models/refresh", {})
-        assert r.headers["location"] == "/settings?models=kept#models"
+        r = _post(c, "/models/refresh", {})
+        assert r.headers["location"] == "/models?list=kept#models"
         assert "kept the previous list" in c.get(r.headers["location"]).text
         assert app.state.catalogue.current is before
 
@@ -530,8 +535,8 @@ def test_a_refresh_with_no_list_at_all(tmp_path: Path) -> None:
     app = _app(tmp_path, catalogue_fetch=failing)
     with TestClient(app, base_url=BASE_URL) as c:
         login(c)
-        r = _post(c, "/settings/models/refresh", {})
-        assert r.headers["location"] == "/settings?models=failed#models"
+        r = _post(c, "/models/refresh", {})
+        assert r.headers["location"] == "/models?list=failed#models"
         assert "couldn&#39;t be loaded" in c.get(r.headers["location"]).text
 
 
@@ -559,9 +564,9 @@ def test_a_failing_rebuild_after_refresh_keeps_the_old_context(
             writer_model="google/gemini-3.8-flash",
         )  # a job uses the list, so a refresh rebuilds
         before = app.state.ctx
-        r = _post(c, "/settings/models/refresh", {})
+        r = _post(c, "/models/refresh", {})
         assert r.status_code == 303
-        assert r.headers["location"] == "/settings?models=refreshed#models"
+        assert r.headers["location"] == "/models?list=refreshed#models"
         assert app.state.ctx is before
         assert builds["n"] == 2
     assert OPENROUTER_KEY not in caplog.text
@@ -575,7 +580,7 @@ def test_a_failing_rebuild_after_refresh_keeps_the_old_context(
 def test_new_key_rows_are_tested_and_write_only(
     app: FastAPI, client: TestClient, key_results: dict[str, str | None], name: str, key: str
 ) -> None:
-    page = client.get("/settings").text
+    page = client.get("/settings").text  # keys stay on Settings
     assert f'id="key-{name}"' in page and f'action="/settings/keys/{name}"' in page
     key_results[name] = f"rejected {key}"
     r = _post(client, f"/settings/keys/{name}", {"key": key})
@@ -586,7 +591,7 @@ def test_new_key_rows_are_tested_and_write_only(
     r = _post(client, f"/settings/keys/{name}", {"key": key})
     assert r.status_code == 303
     assert run(client, app.state.api_keys.resolve_api_key, name) == key
-    for path in ("/settings", "/settings?saved=key", "/"):
+    for path in ("/settings", "/settings?saved=key", "/models", "/"):
         assert key not in client.get(path).text, path
 
 
@@ -597,7 +602,7 @@ def test_a_refused_test_never_logs_the_typed_model(
     pasted = "sk-or-" + "p" * 40
     form = _test_form(tclient, "writer", writer_provider="openrouter", writer_model_other=pasted)
     with caplog.at_level("INFO"):
-        r = _post(tclient, "/settings/models/test", form, headers=HX)
+        r = _post(tclient, "/models/test", form, headers=HX)
     assert "Not tested" in r.text
     assert pasted not in caplog.text
     assert "model test for writer: refused" in caplog.text
@@ -619,12 +624,12 @@ def test_a_test_is_refused_while_a_run_holds_the_lock(
     )
     run(tclient, lock.acquire)
     try:
-        r = _post(tclient, "/settings/models/test", form, headers=HX)
+        r = _post(tclient, "/models/test", form, headers=HX)
     finally:
         run(tclient, _release, lock)
     assert "A run is in progress; try again when it finishes." in r.text
     assert provider.requests == []
-    r = _post(tclient, "/settings/models/test", form, headers=HX)
+    r = _post(tclient, "/models/test", form, headers=HX)
     assert "It works." in r.text and len(provider.requests) == 1
 
 
@@ -641,14 +646,14 @@ def test_a_test_holds_the_run_lock_while_it_calls(
         writer_model="google/gemini-3.8-flash",
         writer_model_other="",
     )
-    assert "It works." in _post(tclient, "/settings/models/test", form, headers=HX).text
+    assert "It works." in _post(tclient, "/models/test", form, headers=HX).text
     assert seen == [True]
     assert not tapp.state.run_lock.locked()
 
 
 def test_a_no_js_result_is_shown_once(tclient: TestClient) -> None:
     form = _test_form(tclient, "writer", writer_provider="openai", writer_model_other="")
-    r = _post(tclient, "/settings/models/test", form)
+    r = _post(tclient, "/models/test", form)
     assert "Not tested." in tclient.get(r.headers["location"]).text
     assert "Not tested." not in tclient.get(r.headers["location"]).text
 
@@ -684,9 +689,11 @@ def test_a_hung_test_times_out_and_frees_the_run_lock(
         writer_model="google/gemini-3.8-flash",
         writer_model_other="",
     )
-    r = _post(tclient, "/settings/models/test", form, headers=HX)
+    r = _post(tclient, "/models/test", form, headers=HX)
     assert "The model didn&#39;t answer within 0.05 seconds." in r.text
     assert not tapp.state.run_lock.locked()
+    # It may still be billed: the month's spend has its worst case (feedback-2).
+    assert run(tclient, tapp.state.store.month_spend, NOW, "Europe/London") > 0
 
 
 def test_the_test_clients_never_retry(tapp: FastAPI, tclient: TestClient) -> None:
@@ -702,3 +709,124 @@ def test_the_test_clients_never_retry(tapp: FastAPI, tclient: TestClient) -> Non
             return client._client.max_retries  # type: ignore[attr-defined]
 
     assert run(tclient, build_or) == 0
+
+
+# ---- the page itself and the flow diagram (feedback-2) -----------------------------------------
+
+
+def _diagram(page: str) -> str:
+    start = page.index('<ol class="flow"')
+    return page[start : page.index("</ol>", start)]
+
+
+def _step(diagram: str, key: str) -> str:
+    start = diagram.rindex("<li ", 0, diagram.index(f'id="flow-{key}"'))
+    end = diagram.find('<li class="flow__step', start + 1)
+    return diagram[start : end if end != -1 else len(diagram)]
+
+
+def test_the_models_page_needs_a_session(anon: TestClient) -> None:
+    r = anon.get("/models", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/login?next=")
+    assert anon.post("/models", follow_redirects=False).status_code == 401
+
+
+def test_the_nav_has_models_after_settings_and_before_compare(client: TestClient) -> None:
+    page = client.get("/models").text
+    nav = page[page.index('<nav class="nav"') : page.index("</nav>")]
+    labels = re.findall(r">([A-Za-z]+)</a>", nav)
+    assert labels == ["Today", "Briefing", "X", "Sources", "Settings", "Models", "Compare"]
+    assert '<a href="/models" aria-current="page">Models</a>' in nav
+
+
+def test_the_page_has_the_rows_the_form_and_the_diagram(app: FastAPI, client: TestClient) -> None:
+    page = client.get("/models").text
+    assert '<form class="models-form" method="post" action="/models">' in page
+    for job in JOBS:
+        assert f'id="model-{job}"' in page, job
+    diagram = _diagram(page)
+    assert page.index('<ol class="flow"') < page.index('id="model-judge"')  # diagram on top
+    # AI steps, each with the model chosen now and its price per million tokens.
+    for key, job in (
+        ("judge", "Judge"),
+        ("merge", "Duplicate merger"),
+        ("write", "Summary writer"),
+        ("briefing", "Briefing writer"),
+    ):
+        step = _step(diagram, key)
+        assert 'class="flow__step flow__step--ai"' in step, key
+        assert job in step, key
+        assert "Anthropic" in step and "claude-haiku-5-5" in step, key
+        assert "$0.1 in, $0.5 out per million tokens" in step, key
+    # Tool and code steps: no AI cost.
+    for key in ("schedule", "collect", "prefilter", "read", "group", "rank", "nightly"):
+        assert 'class="flow__step flow__step--tool"' in _step(diagram, key), key
+    collect = _step(diagram, "collect")
+    for source in ("RSS", "Hacker News", "arXiv", "GitHub releases", "site:x.com"):
+        assert source in collect, source
+    assert "4 times a day" in _step(diagram, "schedule")
+    assert "Refresh now" in _step(diagram, "schedule")
+    assert "07:00" in _step(diagram, "briefing")
+    assert "500 items a day" in _step(diagram, "judge")
+    assert "X page" in _step(diagram, "judge")  # X posts branch off before stories
+    assert "OpenRouter" in _step(diagram, "nightly")
+    # Arrows are decorative; a legend explains the two kinds of box.
+    assert '<span class="flow__arrow" aria-hidden="true"></span>' in diagram
+    assert 'class="flow-legend"' in page
+    assert "Budget check before every AI call" in page and "$5.00 a month" in page
+    assert "Compare" in page and "Test" in page
+
+
+def test_the_diagram_follows_the_saved_choice(app: FastAPI, client: TestClient) -> None:
+    run(client, _drain, app)
+    run(
+        client,
+        update_runtime_settings,
+        app.state.store,
+        writer_provider="openrouter",
+        writer_model="google/gemini-3.8-flash",
+        judge_provider="typesafe",
+        judge_model="jev-1.13.0",
+        runs_per_day=12,
+        briefing_time="06:30",
+    )
+    diagram = _diagram(client.get("/models").text)
+    write = _step(diagram, "write")
+    assert "OpenRouter" in write and "google/gemini-3.8-flash" in write
+    assert "$0.75 in, $3.75 out per million tokens" in write
+    assert "TypeSafe (Jev)" in _step(diagram, "judge") and "jev-1.13.0" in diagram
+    assert "12 times a day" in _step(diagram, "schedule")
+    assert "06:30" in _step(diagram, "briefing")
+
+
+def test_settings_keeps_the_rest_and_links_to_models(client: TestClient) -> None:
+    page = client.get("/settings").text
+    assert 'id="model-judge"' not in page and 'name="judge_provider"' not in page
+    assert "/models/test" not in page and "Refresh model list" not in page
+    assert '<a href="/models">Models</a>' in page
+    for section in ("schedule", "spending", "reading", "keys", "run"):
+        assert f'id="{section}"' in page, section
+
+
+def test_saving_settings_never_touches_the_models(app: FastAPI, client: TestClient) -> None:
+    run(client, _drain, app)
+    _save_keys(client)
+    chosen = {"judge_provider": "openrouter", "judge_model": "google/gemini-3.8-flash"}
+    run(client, update_runtime_settings, app.state.store, **chosen)
+    form = settings_form(client.get("/settings").text)
+    form["show_threshold"] = "6"
+    r = _post(client, "/settings", form)
+    assert r.status_code == 303, r.text
+    saved = _settings(client, app)
+    assert (saved.judge_provider, saved.judge_model, saved.show_threshold) == (
+        "openrouter",
+        "google/gemini-3.8-flash",
+        6,
+    )
+
+
+def test_a_models_save_redirects_to_models(app: FastAPI, client: TestClient) -> None:
+    r = _post(client, "/models", browser_form(client.get("/models").text))
+    assert r.status_code == 303
+    assert r.headers["location"] == "/models?saved=1"
+    assert "Models saved." in client.get(r.headers["location"]).text

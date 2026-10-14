@@ -1759,6 +1759,244 @@ select:focus-visible {
   max-width: 60rem;
 }
 
+.models-form {
+  display: grid;
+  gap: var(--space-7);
+}
+
+/* ---------- Models: the flow diagram ----------
+   An ordered list of boxes, left to right in rows (one column on phones). AI steps are
+   accent-coloured; tool and code steps are neutral. Arrows are decorative (aria-hidden): the
+   list order is the flow. The arrow out of the last box in a row is hidden. */
+.flow-panel {
+  margin-bottom: var(--space-7);
+}
+
+.flow-panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-5);
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.flow-panel__head h2 {
+  font-size: var(--step-2);
+  font-style: italic;
+}
+
+.flow-legend {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  color: var(--ink-2);
+  font-size: var(--step--1);
+}
+
+.flow-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.flow-legend__swatch {
+  flex: none;
+  width: 1.25rem;
+  height: 0.875rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+.flow-legend__swatch--ai {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.flow {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+  counter-reset: flow;
+}
+
+.flow__step {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  counter-increment: flow;
+}
+
+.flow__step--ai {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  box-shadow: inset var(--gauge-w) 0 0 var(--accent);
+}
+
+.flow__when {
+  color: var(--ink-2);
+  font-size: var(--step--2);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.flow__when::before {
+  content: counter(flow) ". ";
+  content: counter(flow) ". " / "";
+}
+
+.flow__title {
+  font-size: var(--step-1);
+}
+
+.flow__model {
+  font-size: var(--step--1);
+  overflow-wrap: anywhere;
+}
+
+.flow__provider {
+  font-weight: 600;
+}
+
+.flow__model a {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.flow__price {
+  color: var(--ink-2);
+  font-size: var(--step--2);
+}
+
+.flow__text {
+  margin-top: var(--space-1);
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  line-height: 1.45;
+}
+
+.flow__branch {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: var(--step--2);
+}
+
+.flow__branch::before {
+  content: "\21B3\00a0";
+  content: "\21B3\00a0" / "";
+}
+
+/* Phones: an arrow down into the next box. */
+.flow__arrow {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 2px;
+  height: var(--space-5);
+  background: var(--rule-strong);
+  transform: translateX(-50%);
+}
+
+.flow__arrow::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  border: 5px solid transparent;
+  border-top-color: var(--rule-strong);
+  border-bottom: 0;
+  transform: translateX(-50%);
+}
+
+@media (min-width: 40rem) {
+  .flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  /* Wider screens: an arrow right, across the gap. */
+  .flow__arrow {
+    top: 50%;
+    left: 100%;
+    width: var(--space-5);
+    height: 2px;
+    transform: translateY(-50%);
+  }
+  .flow__arrow::after {
+    top: 50%;
+    right: 0;
+    bottom: auto;
+    left: auto;
+    border: 5px solid transparent;
+    border-left-color: var(--rule-strong);
+    border-right: 0;
+    transform: translateY(-50%);
+  }
+  .flow__step:nth-child(2n) .flow__arrow {
+    display: none;
+  }
+}
+
+@media (min-width: 64rem) {
+  .flow {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .flow__step:nth-child(2n) .flow__arrow {
+    display: block;
+  }
+  .flow__step:nth-child(4n) .flow__arrow {
+    display: none;
+  }
+}
+
+.flow-notes {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+@media (min-width: 64rem) {
+  .flow-notes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.flow-note {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--step--1);
+}
+
+.flow-note strong {
+  color: var(--ink);
+}
+
+.flow-note--ai {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+
 .panel {
   display: grid;
   gap: var(--space-5);

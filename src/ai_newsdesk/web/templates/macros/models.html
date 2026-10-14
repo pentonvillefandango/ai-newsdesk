@@ -1,6 +1,6 @@
-{# The model controls shared by Settings (one row per job) and Compare (one row per model):
+{# The model controls shared by Models (one row per job) and Compare (one row per model):
    a Provider select, a Model select with one optgroup per provider, and an "Other model" box
-   whose datalist follows the provider (static/settings.js). `row` is a model_choices.ModelRow. #}
+   whose datalist follows the provider (static/models.js). `row` is a model_choices.ModelRow. #}
 {% macro _aria(name, errors) %}{% if errors.get(name) %} aria-describedby="{{ name }}-error" aria-invalid="true"{% endif %}{% endmacro %}
 {% macro _error(name, errors) %}{% if errors.get(name) %}<p class="field__error" id="{{ name }}-error">{{ errors[name] }}</p>{% endif %}{% endmacro %}
 

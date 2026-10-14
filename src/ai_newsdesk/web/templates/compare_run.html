@@ -8,7 +8,7 @@
   <p class="page-head__back"><a href="/compare">All comparisons</a></p>
 </header>
 {% if used %}
-<div class="notice notice--ok" role="status"><p>{{ used_model }} is now the {{ "judge" if run.job == "judge" else "summary writer" }}. It applies from the next run.</p></div>
+<div class="notice notice--ok" role="status"><p>{{ used_model }} is now the {{ "judge" if run.job == "judge" else "summary writer" }}. It applies from the next run. <a href="/models#model-{{ run.job }}">See it on Models</a></p></div>
 {% if used_warning %}
 <div class="notice notice--warn" role="note"><p>{{ used_warning }}</p></div>
 {% endif %}

@@ -46,7 +46,7 @@ class _Assets(HTMLParser):
 
 
 # Pages that add their own static script after the base two (progressive enhancement only).
-PAGE_SCRIPTS = {"/settings": ["/static/settings.js"], "/compare": ["/static/settings.js"]}
+PAGE_SCRIPTS = {"/models": ["/static/models.js"], "/compare": ["/static/models.js"]}
 
 
 def _check_page(html: str, where: str) -> None:
@@ -93,7 +93,7 @@ def test_static_files_are_served_without_login(anon: TestClient) -> None:
         ("/static/icons.svg", "image/svg+xml"),
         ("/static/htmx.min.js", "javascript"),
         ("/static/theme.js", "javascript"),
-        ("/static/settings.js", "javascript"),
+        ("/static/models.js", "javascript"),
     ):
         r = anon.get(path)
         assert r.status_code == 200, path
@@ -265,9 +265,9 @@ def test_theme_js_is_plain_and_guards_storage() -> None:
     assert "dataset.theme" in js
 
 
-def test_settings_js_is_plain_and_optional() -> None:
+def test_models_js_is_plain_and_optional() -> None:
     """The Models rows work without it: it only narrows lists and clears the text box."""
-    js = (STATIC_DIR / "settings.js").read_text()
+    js = (STATIC_DIR / "models.js").read_text()
     assert '"use strict"' in js
     for banned in ("eval(", "innerHTML", "new Function", "document.write", "fetch("):
         assert banned not in js, banned
