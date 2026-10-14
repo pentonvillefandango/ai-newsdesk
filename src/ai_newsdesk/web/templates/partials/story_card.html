@@ -4,7 +4,7 @@
   <span class="gauge" aria-hidden="true"></span>
   <div class="story__body">
     <p class="story__meta">
-      <span class="badge">Signal {{ signal }}</span>
+      {% if story.scored %}<span class="badge">Signal {{ signal }}</span>{% else %}<span class="badge badge--unscored">Unscored</span>{% endif %}
       <span>{{ category_label(story.category) }}</span>
       <time datetime="{{ story.last_updated_at.isoformat() }}">{{ ago(story.last_updated_at, now) }}</time>
     </p>

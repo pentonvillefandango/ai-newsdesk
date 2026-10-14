@@ -762,7 +762,7 @@ class Store:
         stories: list[Story] = []
         for r in rows:
             items = await self._all(
-                "SELECT i.id, i.url, i.title, i.published_at, s.name, s.kind"
+                "SELECT i.id, i.url, i.title, i.published_at, i.signal, s.name, s.kind"
                 " FROM items i JOIN sources s ON s.id = i.source_id WHERE i.story_id = ?"
                 " ORDER BY COALESCE(i.signal, -1) DESC, i.id ASC",
                 (r["id"],),
@@ -778,6 +778,7 @@ class Store:
                     first_seen_at=_req_dt(r["first_seen_at"]),
                     last_updated_at=_req_dt(r["last_updated_at"]),
                     feedback=r["feedback"],
+                    scored=any(i["signal"] is not None for i in items),
                     sources=[
                         StorySource(
                             item_id=i["id"],
@@ -1073,11 +1074,12 @@ class Store:
                 first_seen_at=_req_dt(r["first_seen_at"]),
                 last_updated_at=_req_dt(r["last_updated_at"]),
                 feedback=int(r["feedback"] or 0),
+                scored=False,  # set below from the items' signals
             )
             for r in rows
         }
         items = await self._all(
-            "SELECT i.id AS item_id, i.story_id, i.url, i.title, i.published_at,"  # noqa: S608
+            "SELECT i.id AS item_id, i.story_id, i.url, i.title, i.published_at, i.signal,"  # noqa: S608
             " s.name AS source_name, s.kind AS source_kind"
             " FROM items i JOIN sources s ON s.id = i.source_id"
             f" WHERE i.story_id IN ({marks})"
@@ -1087,6 +1089,7 @@ class Store:
         for r in items:
             story = stories.get(int(r["story_id"]))
             if story is not None:
+                story.scored = story.scored or r["signal"] is not None
                 story.sources.append(
                     StorySource(
                         item_id=int(r["item_id"]),
@@ -1102,12 +1105,14 @@ class Store:
     async def unscored_items(
         self, now: dt.datetime, hours: int = 24, limit: int = 30
     ) -> list[UnscoredItem]:
-        """Recent items with no verdict, best heuristic score first."""
+        """Recent items with no verdict that are not already shown in a story, best heuristic
+        score first."""
         rows = await self._all(
             "SELECT i.id AS item_id, i.url, i.title, i.published_at, i.status,"
             " s.name AS source_name, s.kind AS source_kind"
             " FROM items i JOIN sources s ON s.id = i.source_id"
-            " WHERE i.status IN ('review_failed', 'queued') AND i.fetched_at >= ?"
+            " WHERE i.status IN ('review_failed', 'queued') AND i.story_id IS NULL"
+            " AND i.fetched_at >= ?"
             " ORDER BY i.heuristic_score DESC, i.fetched_at DESC, i.id DESC LIMIT ?",
             (_ts(now - dt.timedelta(hours=hours)), limit),
         )
