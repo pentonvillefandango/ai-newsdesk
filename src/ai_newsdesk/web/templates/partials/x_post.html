@@ -1,0 +1,33 @@
+{% set post_url = post.url|safe_url %}
+{% set when = post.published_at or post.fetched_at %}
+<article class="post{% if post.dismissed %} post--dismissed{% endif %}" id="post-{{ post.item_id }}" aria-labelledby="post-{{ post.item_id }}-who">
+  <header class="post__head">
+    <svg class="icon post__logo" aria-hidden="true"><use href="/static/icons.svg#i-x-logo"></use></svg>
+    <p class="post__who" id="post-{{ post.item_id }}-who">
+      <span class="post__handle">@{{ post.handle }}</span>
+      {% if post.source_name not in (post.handle, "@" ~ post.handle) %}<span class="post__name">{{ post.source_name }}</span>{% endif %}
+    </p>
+    {% if post.signal is not none and post.status == "reviewed" %}<span class="badge">Signal {{ post.signal }}</span>{% else %}<span class="badge badge--unscored">Unscored</span>{% endif %}
+  </header>
+  <div class="post__text">
+    {% for line in (post.text or post.title).splitlines() if line.strip() %}
+    <p>{{ line }}</p>
+    {% endfor %}
+  </div>
+  <footer class="post__foot">
+    <time datetime="{{ when.isoformat() }}">{% if not post.published_at %}seen {% endif %}{{ ago(when, now) }}</time>
+    {% if post_url != '#' %}<a class="post__open" href="{{ post_url }}" rel="noopener noreferrer" target="_blank">Open on X<svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-external-link"></use></svg></a>{% else %}<span class="post__url">{{ post.url }}</span>{% endif %}
+  </footer>
+  {% if post.dismissed %}
+  <form class="dismiss dismiss--restore" method="post" action="/x/{{ post.item_id }}/undismiss" hx-post="/x/{{ post.item_id }}/undismiss" hx-target="#post-{{ post.item_id }}" hx-swap="delete">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="dismissed" value="1">
+    <button class="button button--quiet button--small" type="submit" aria-label="Restore: @{{ post.handle }}">Restore</button>
+  </form>
+  {% else %}
+  <form class="dismiss" method="post" action="/x/{{ post.item_id }}/dismiss" hx-post="/x/{{ post.item_id }}/dismiss" hx-target="#post-{{ post.item_id }}" hx-swap="outerHTML">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button class="dismiss__button" type="submit" aria-label="Dismiss: @{{ post.handle }}" title="Dismiss"{% if focus_dismiss %} autofocus{% endif %}><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-close"></use></svg></button>
+  </form>
+  {% endif %}
+</article>

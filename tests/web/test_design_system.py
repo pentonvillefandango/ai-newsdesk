@@ -11,7 +11,7 @@ from ai_newsdesk.web.deps import STATIC_DIR, templates
 from tests.web.support import api_routes, csrf_token
 
 HTMX_SHA256 = "d6fdc75f204e6bdefa99b69bf1e6d4ac69b8a364f77929f45c13476b4000f717"
-ICONS = ("thumbs-up", "thumbs-down", "external-link", "refresh", "x-logo", "rss", "hn")
+ICONS = ("thumbs-up", "thumbs-down", "external-link", "refresh", "x-logo", "rss", "hn", "close")
 
 
 class _Assets(HTMLParser):

@@ -43,4 +43,10 @@
       <path d="M12 13v4"/>
     </g>
   </symbol>
+  <symbol id="i-close" viewBox="0 0 24 24">
+    <g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">
+      <path d="M6 6l12 12"/>
+      <path d="M18 6L6 18"/>
+    </g>
+  </symbol>
 </svg>

@@ -1,6 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Today on Newsdesk{% endblock %}
 {% block content %}
+{% if showing_dismissed %}
+<header class="page-head">
+  <h1>Dismissed</h1>
+  <p class="lede">{% if stories %}{{ stories|length }} {{ "story" if stories|length == 1 else "stories" }} you dismissed from the last 24 hours. Restore one to put it back on Today.{% else %}Nothing dismissed from the last 24 hours.{% endif %}</p>
+  <p class="page-head__back"><a href="{{ back_url }}">Back to Today</a></p>
+</header>
+{% if stories %}
+<section aria-labelledby="dismissed-title">
+  <h2 id="dismissed-title" class="visually-hidden">Dismissed stories</h2>
+  <div class="cards">
+    {% for story in stories %}
+    {% with lead = false %}{% include "partials/story_card.html" %}{% endwith %}
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% else %}
 <header class="page-head">
   <h1><time datetime="{{ local_today.isoformat() }}">{{ day_label(local_today) }}</time></h1>
   {% if stories %}
@@ -77,6 +94,10 @@
       </ul>
     </section>
     {% endif %}
+    {% if dismissed_count %}
+    <p class="show-dismissed"><a href="{{ dismissed_url }}">Show dismissed ({{ dismissed_count }})</a></p>
+    {% endif %}
   </div>
 </div>
+{% endif %}
 {% endblock %}

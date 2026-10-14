@@ -1,6 +1,6 @@
 {% set signal = signal_of(story.score) %}
 {% set lead_src = story.sources[0] if story.sources else none %}
-<article class="story{% if lead %} story--lead{% endif %}" id="story-{{ story.id }}" data-signal="{{ signal }}" aria-labelledby="story-{{ story.id }}-title">
+<article class="story{% if lead %} story--lead{% endif %}{% if story.dismissed %} story--dismissed{% endif %}" id="story-{{ story.id }}" data-signal="{{ signal }}" aria-labelledby="story-{{ story.id }}-title">
   <span class="gauge" aria-hidden="true"></span>
   <div class="story__body">
     <p class="story__meta">
@@ -69,4 +69,25 @@
       </form>
     </details>
   </div>
+  {% if story.dismissed %}
+  <form class="dismiss dismiss--restore" method="post" action="/stories/{{ story.id }}/undismiss" hx-post="/stories/{{ story.id }}/undismiss" hx-target="#story-{{ story.id }}" hx-swap="delete">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="dismissed" value="1">
+    {% if view == "category" %}
+    <input type="hidden" name="view" value="category">
+    {% endif %}
+    <button class="button button--quiet button--small" type="submit" aria-label="Restore: {{ story.headline }}">Restore</button>
+  </form>
+  {% else %}
+  <form class="dismiss" method="post" action="/stories/{{ story.id }}/dismiss" hx-post="/stories/{{ story.id }}/dismiss" hx-target="#story-{{ story.id }}" hx-swap="outerHTML">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if lead %}
+    <input type="hidden" name="lead" value="1">
+    {% endif %}
+    {% if view == "category" %}
+    <input type="hidden" name="view" value="category">
+    {% endif %}
+    <button class="dismiss__button" type="submit" aria-label="Dismiss: {{ story.headline }}" title="Dismiss"{% if focus_dismiss %} autofocus{% endif %}><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-close"></use></svg></button>
+  </form>
+  {% endif %}
 </article>
