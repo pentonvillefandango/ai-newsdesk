@@ -113,7 +113,8 @@ def test_every_page_loads_only_local_assets(app: FastAPI, client: TestClient) ->
         for r in api_routes(app)
         if "GET" in (r.methods or set()) and "{" not in r.path and r.path != "/health"
     ]
-    assert "/login" in pages  # Task 28 adds "/" (Today); restore `"/" in pages` there
+    assert "/" in pages
+    assert "/login" in pages
     for path in pages:
         r = client.get(path)
         if r.headers.get("content-type", "").startswith("text/html"):

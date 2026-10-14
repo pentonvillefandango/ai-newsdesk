@@ -36,6 +36,7 @@ from ai_newsdesk.models import (
     StorySource,
     StoryText,
     Trust,
+    UnscoredItem,
     Usage,
     Verdict,
     WriteInput,
@@ -959,3 +960,77 @@ class Store:
         await asyncio.to_thread(dest.parent.mkdir, parents=True, exist_ok=True)
         async with self._lock, aiosqlite.connect(dest) as target:
             await self._db.backup(target)
+
+    # --- web queries (step 5) -------------------------------------------------------------
+
+    async def stories_by_ids(self, ids: list[int]) -> dict[int, Story]:
+        """Stories by ID with their sources, lead (highest signal, then lowest id) first."""
+        if not ids:
+            return {}
+        marks = ",".join("?" * len(ids))
+        rows = await self._all(
+            "SELECT id, headline, category, score, summary, why_it_matters, first_seen_at,"  # noqa: S608
+            f" last_updated_at, feedback FROM stories WHERE id IN ({marks})",
+            ids,
+        )
+        stories: dict[int, Story] = {
+            int(r["id"]): Story(
+                id=int(r["id"]),
+                headline=r["headline"],
+                category=Category(r["category"]),
+                score=float(r["score"] or 0.0),
+                summary=r["summary"],
+                why_it_matters=r["why_it_matters"],
+                first_seen_at=_req_dt(r["first_seen_at"]),
+                last_updated_at=_req_dt(r["last_updated_at"]),
+                feedback=int(r["feedback"] or 0),
+            )
+            for r in rows
+        }
+        items = await self._all(
+            "SELECT i.id AS item_id, i.story_id, i.url, i.title, i.published_at,"  # noqa: S608
+            " s.name AS source_name, s.kind AS source_kind"
+            " FROM items i JOIN sources s ON s.id = i.source_id"
+            f" WHERE i.story_id IN ({marks})"
+            " ORDER BY i.story_id, COALESCE(i.signal, -1) DESC, i.id",
+            ids,
+        )
+        for r in items:
+            story = stories.get(int(r["story_id"]))
+            if story is not None:
+                story.sources.append(
+                    StorySource(
+                        item_id=int(r["item_id"]),
+                        source_name=r["source_name"],
+                        source_kind=SourceKind(r["source_kind"]),
+                        url=r["url"],
+                        title=r["title"],
+                        published_at=_dt(r["published_at"]),
+                    )
+                )
+        return stories
+
+    async def unscored_items(
+        self, now: dt.datetime, hours: int = 24, limit: int = 30
+    ) -> list[UnscoredItem]:
+        """Recent items with no verdict, best heuristic score first."""
+        rows = await self._all(
+            "SELECT i.id AS item_id, i.url, i.title, i.published_at, i.status,"
+            " s.name AS source_name, s.kind AS source_kind"
+            " FROM items i JOIN sources s ON s.id = i.source_id"
+            " WHERE i.status IN ('review_failed', 'queued') AND i.fetched_at >= ?"
+            " ORDER BY i.heuristic_score DESC, i.fetched_at DESC, i.id DESC LIMIT ?",
+            (_ts(now - dt.timedelta(hours=hours)), limit),
+        )
+        return [
+            UnscoredItem(
+                item_id=int(r["item_id"]),
+                source_name=r["source_name"],
+                source_kind=SourceKind(r["source_kind"]),
+                url=r["url"],
+                title=r["title"],
+                published_at=_dt(r["published_at"]),
+                status=ItemStatus(r["status"]),
+            )
+            for r in rows
+        ]

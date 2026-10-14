@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Today on Newsdesk{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1><time datetime="{{ local_today.isoformat() }}">{{ day_label(local_today) }}</time></h1>
+  {% if stories %}
+  <p class="lede">{{ stories|length }} {{ "story" if stories|length == 1 else "stories" }} worth your time from the last 24 hours, found by {{ source_count }} {{ "source" if source_count == 1 else "sources" }}.</p>
+  {% endif %}
+  <div class="toolbar">
+    <nav class="switch" aria-label="Arrange stories">
+      <a href="/?view=top"{% if view == "top" %} aria-current="true"{% endif %}>Top</a>
+      <a href="/?view=category"{% if view == "category" %} aria-current="true"{% endif %}>By section</a>
+    </nav>
+  </div>
+</header>
+{% if blocked %}
+<div class="notice notice--ok" role="status"><p>Added to the blocklist. New items that mention it are dropped from the next run.</p></div>
+{% endif %}
+<div class="today{% if view == 'category' and groups %} today--indexed{% endif %}">
+  {% if view == "category" and groups %}
+  <nav class="index" aria-label="Sections">
+    <ul>
+      {% for group in groups %}
+      <li><a href="#{{ group.slug }}"><span>{{ group.label }}</span><span class="count">{{ group.stories|length }}</span></a></li>
+      {% endfor %}
+    </ul>
+  </nav>
+  {% endif %}
+  <div class="stream">
+    {% if not stories and not unscored %}
+    <section class="empty">
+      <h2>Nothing above the bar yet</h2>
+      <p>The desk checks your sources {{ runtime.runs_per_day }} {{ "time" if runtime.runs_per_day == 1 else "times" }} a day and shows stories that score {{ runtime.show_threshold }} or more. <a href="/settings#run">Run it now</a>, or <a href="/settings#reading">lower the bar</a>.</p>
+    </section>
+    {% elif view == "category" %}
+    {% for group in groups %}
+    <section class="section" id="{{ group.slug }}" aria-labelledby="{{ group.slug }}-title">
+      <div class="section__head">
+        <h2 id="{{ group.slug }}-title">{{ group.label }}</h2>
+        <span class="section__count">{{ group.stories|length }}</span>
+      </div>
+      {% for story in group.stories %}
+      {% with lead = false %}{% include "partials/story_card.html" %}{% endwith %}
+      {% endfor %}
+    </section>
+    {% endfor %}
+    {% elif stories %}
+    <section aria-labelledby="top-title">
+      <h2 id="top-title" class="visually-hidden">Top stories</h2>
+      {% for story in stories %}
+      {% with lead = loop.first %}{% include "partials/story_card.html" %}{% endwith %}
+      {% endfor %}
+    </section>
+    {% endif %}
+    {% if unscored %}
+    <section class="section" id="unscored" aria-labelledby="unscored-title">
+      <div class="section__head">
+        <h2 id="unscored-title">Waiting for review</h2>
+        <span class="section__count">{{ unscored|length }}</span>
+      </div>
+      <p class="section__note">{% if budget_reached %}This month's budget is spent, so these items were not reviewed. They are listed by source rank only.{% else %}These items could not be reviewed yet. The next run tries again.{% endif %}</p>
+      <ul class="unscored">
+        {% for item in unscored %}
+        <li>
+          <p class="story__meta"><span class="badge badge--unscored">Unscored{% if budget_reached %}: budget reached{% endif %}</span><span>{{ item.source_name }}</span>{% if item.published_at %}<time datetime="{{ item.published_at.isoformat() }}">{{ ago(item.published_at, now) }}</time>{% endif %}</p>
+          {% set item_url = item.url|safe_url %}
+          <p class="unscored__title">{% if item_url != '#' %}<a href="{{ item_url }}" rel="noopener noreferrer" target="_blank">{{ item.title }}</a>{% else %}{{ item.title }}{% endif %}</p>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

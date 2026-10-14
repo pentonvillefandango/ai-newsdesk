@@ -164,3 +164,15 @@ class StorySource(BaseModel):
 
 
 Story.model_rebuild()  # resolve the forward reference to StorySource
+
+
+class UnscoredItem(BaseModel):
+    """An item with no verdict (review failed, or still queued); never hidden from the owner."""
+
+    item_id: int
+    source_name: str
+    source_kind: SourceKind
+    url: str
+    title: str
+    published_at: datetime | None = None
+    status: ItemStatus
