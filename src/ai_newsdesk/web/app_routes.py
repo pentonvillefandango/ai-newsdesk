@@ -10,6 +10,7 @@ from ai_newsdesk.web import (
     routes_settings,
     routes_sources,
     routes_today,
+    routes_x,
 )
 
 
@@ -19,6 +20,7 @@ def build_router() -> APIRouter:
         routes_health.router,
         routes_today.router,
         routes_briefing.router,
+        routes_x.router,
         routes_sources.router,
         routes_settings.router,
     ):
