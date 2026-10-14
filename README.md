@@ -12,6 +12,7 @@ A self-hosted, high-signal AI news feed. It collects news from AI labs and from 
 - Story summaries with an optional "why it matters" line, and a daily briefing.
 - A hard monthly AI budget (default $5), checked before every call.
 - Settings page: run frequency, caps, models, write-only API keys, spend meter.
+- Wide "lead + grid" layout on desktop, single column on phones; an Auto / Light / Dark theme toggle remembered per browser.
 - One owner password; lab-only behind a shared Caddy with HTTPS.
 
 ## Quick start

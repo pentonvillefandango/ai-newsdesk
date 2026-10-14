@@ -59,8 +59,12 @@
   --dur: 160ms;
 }
 
+/* Dark theme. Auto follows the device unless the owner forced Light; the toggle (theme.js) sets
+   data-theme="light" or "dark" on <html>. The forced-dark block below repeats these tokens exactly
+   (CSS cannot share one declaration block between a media query and a selector); a test keeps the
+   two copies identical. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --paper: #121a25;
     --surface: #18222f;
     --ink: #e4e9ef;
@@ -77,6 +81,29 @@
     --ok: #7cc4a0;
     --ok-wash: #183026;
   }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #121a25;
+  --surface: #18222f;
+  --ink: #e4e9ef;
+  --ink-2: #b3becb;
+  --ink-3: #8d9aaa;
+  --rule: #2a3646;
+  --rule-strong: #3e4c5e;
+  --track: #263243;
+  --accent: #e2a63c;
+  --accent-wash: #2f2817;
+  --on-ink: #121a25;
+  --danger: #f08b80;
+  --danger-wash: #3a1f1e;
+  --ok: #7cc4a0;
+  --ok-wash: #183026;
 }
 
 /* ---------- Base ---------- */
@@ -260,6 +287,42 @@ code {
   font-size: var(--step--1);
 }
 
+/* Auto / Light / Dark. Hidden until theme.js runs (it does nothing without it); theme.js sets
+   data-theme-ready in <head>, before the first paint, so the masthead never shifts. */
+.theme {
+  display: none;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+}
+
+:root[data-theme-ready] .theme {
+  display: inline-flex;
+}
+
+.theme button {
+  appearance: none;
+  min-height: 1.75rem;
+  padding: 0.15rem 0.6rem;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-2);
+  font: 500 var(--step--2) / 1 var(--font-body);
+  cursor: pointer;
+}
+
+.theme button:hover {
+  color: var(--ink);
+}
+
+.theme button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
 @media (max-width: 40rem) {
   .masthead__inner {
     justify-content: space-between;
@@ -269,6 +332,10 @@ code {
     width: 100%;
     margin-left: 0;
     justify-content: space-between;
+  }
+  .theme {
+    order: 1;
+    margin-left: auto;
   }
   .logout {
     order: 2;
@@ -1542,6 +1609,7 @@ select:focus-visible {
   .chip,
   .nav a,
   .switch a,
+  .theme button,
   .link-button {
     transition:
       color var(--dur) ease-out,
@@ -1575,7 +1643,8 @@ select:focus-visible {
       CanvasText calc(var(--signal, 0.68) * 100%) 100%
     );
   }
-  .thumb[aria-pressed="true"] {
+  .thumb[aria-pressed="true"],
+  .theme button[aria-pressed="true"] {
     outline: 2px solid Highlight;
   }
   .meter__fill,
