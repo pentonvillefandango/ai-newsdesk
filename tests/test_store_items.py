@@ -1,7 +1,9 @@
 """Store: lifecycle, sources and items (Task 6, part 1)."""
 
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -283,3 +285,37 @@ async def test_stranded_new_items_lists_recent_new_items_with_their_source(store
     assert cand.snippet == "Model X is a new open-weights model."
     assert src.id == sid and src.name == "Lab"
     assert old not in {i for i, _, _ in stranded}
+
+
+async def test_failed_commit_is_rolled_back_and_the_next_write_works(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = store._db
+    real_execute = conn.execute
+    failures = ["COMMIT"]
+
+    def flaky_execute(sql: str, *args: Any) -> Any:
+        if failures and sql == failures[0]:
+            failures.pop()
+            raise sqlite3.OperationalError("disk I/O error")
+        return real_execute(sql, *args)
+
+    monkeypatch.setattr(conn, "execute", flaky_execute)
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+        await store.set_setting("lost", 1)
+    assert not conn.in_transaction
+    await store.set_setting("kept", 2)
+    assert await store.get_setting("kept") == 2
+    assert await store.get_setting("lost") is None
+
+
+async def test_error_after_an_automatic_rollback_is_not_masked(store: Store) -> None:
+    class Boom(Exception):
+        pass
+
+    with pytest.raises(Boom):
+        async with store._tx() as conn:
+            await conn.execute("ROLLBACK")  # as SQLite does itself on some errors
+            raise Boom
+    await store.set_setting("after", 1)
+    assert await store.get_setting("after") == 1

@@ -237,16 +237,22 @@ class Store:
 
     @asynccontextmanager
     async def _tx(self) -> AsyncIterator[aiosqlite.Connection]:
-        """One write transaction, holding the lock; rolled back on any error."""
+        """One write transaction, holding the lock; rolled back on any error.
+
+        A failed COMMIT is rolled back too, so the connection is never left inside an open
+        transaction. ROLLBACK runs only while a transaction is still open (SQLite rolls some
+        errors back by itself), so the original error is always the one raised.
+        """
         async with self._lock:
             conn = self._db
             await conn.execute("BEGIN IMMEDIATE")
             try:
                 yield conn
+                await conn.execute("COMMIT")
             except BaseException:
-                await conn.execute("ROLLBACK")
+                if conn.in_transaction:
+                    await conn.execute("ROLLBACK")
                 raise
-            await conn.execute("COMMIT")
 
     async def _all(self, sql: str, params: Iterable[Any] = ()) -> list[aiosqlite.Row]:
         async with self._lock, self._db.execute(sql, tuple(params)) as cur:
