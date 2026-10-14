@@ -48,7 +48,7 @@ class _Assets(HTMLParser):
 def _check_page(html: str, where: str) -> None:
     p = _Assets()
     p.feed(html)
-    assert p.scripts == ["/static/htmx.min.js"], where
+    assert p.scripts == ["/static/theme.js", "/static/htmx.min.js"], where
     assert not p.inline_script, where
     assert p.style_elements == 0, where
     assert p.style_attrs == 0, where
@@ -87,6 +87,7 @@ def test_static_files_are_served_without_login(anon: TestClient) -> None:
         ("/static/app.css", "text/css"),
         ("/static/icons.svg", "image/svg+xml"),
         ("/static/htmx.min.js", "javascript"),
+        ("/static/theme.js", "javascript"),
     ):
         r = anon.get(path)
         assert r.status_code == 200, path
@@ -168,3 +169,91 @@ def test_chart_fills_its_width_and_form_fields_align_to_the_top() -> None:
     assert "width: 100%" in chart
     assert "max-height" not in chart
     assert "align-content: start" in _rule(css, ".field")
+
+
+def _media_blocks(css: str, query: str) -> list[str]:
+    """The bodies of every `@media <query> { ... }` block (brace-matched)."""
+    bodies: list[str] = []
+    start = 0
+    while (at := css.find(f"@media {query} {{", start)) != -1:
+        i = css.index("{", at) + 1
+        depth = 1
+        j = i
+        while depth:
+            depth += {"{": 1, "}": -1}.get(css[j], 0)
+            j += 1
+        bodies.append(css[i : j - 1])
+        start = j
+    return bodies
+
+
+def test_wide_screens_get_a_wide_page_and_a_card_grid() -> None:
+    css = (STATIC_DIR / "app.css").read_text()
+    wide = re.search(r"--wide:\s*([\d.]+)rem;", css)
+    assert wide and 80 <= float(wide.group(1)) <= 84
+    assert "max-width: var(--wide)" in _rule(css, ".page")
+    desktop = "\n".join(_media_blocks(css, "(min-width: 64rem)"))
+    assert "repeat(auto-fill, minmax(20rem, 1fr))" in _rule(desktop, "  .cards")
+    assert "max-width: none" in _rule(desktop, "  .stream")
+    # Forms and lists stay readable on the wide page.
+    sources = re.search(r"max-width:\s*([\d.]+)rem", _rule(css, ".kind"))
+    assert sources and float(sources.group(1)) <= 72
+    settings = re.search(r"max-width:\s*([\d.]+)rem", _rule(css, ".settings"))
+    assert settings and float(settings.group(1)) <= 72
+
+
+# ---- Theme toggle (feedback-1) ------------------------------------------------------------------
+
+DARK_MEDIA = "@media (prefers-color-scheme: dark)"
+
+
+def test_stylesheet_has_auto_light_and_dark_theme_selectors() -> None:
+    css = (STATIC_DIR / "app.css").read_text()
+    auto = _media_blocks(css, "(prefers-color-scheme: dark)")
+    assert any(':root:not([data-theme="light"])' in body for body in auto)
+    forced_dark = _rule(css, ':root[data-theme="dark"]')
+    forced_light = _rule(css, ':root[data-theme="light"]')
+    assert "color-scheme: dark" in forced_dark
+    assert "color-scheme: light" in forced_light
+    # The forced-dark tokens are a copy of the device-dark ones: keep them identical.
+    auto_tokens = re.findall(
+        r"(--[\w-]+):\s*([^;]+);", _rule(auto[0], '  :root:not([data-theme="light"])')
+    )
+    dark_tokens = re.findall(r"(--[\w-]+):\s*([^;]+);", forced_dark)
+    assert len(auto_tokens) >= 15
+    assert auto_tokens == dark_tokens
+
+
+def test_base_template_loads_theme_js_early_and_has_the_control() -> None:
+    html = templates.get_template("base.html").render(
+        csrf_token="tok", active="today", budget_reached=False
+    )
+    head = html[: html.index("</head>")]
+    script = '<script src="/static/theme.js"></script>'
+    assert script in head  # synchronous: no defer/async, so the theme is set before paint
+    assert head.index(script) < head.index('<link rel="stylesheet"')
+    assert '<div class="theme" role="group" aria-label="Theme">' in html
+    for choice, label in (("auto", "Auto"), ("light", "Light"), ("dark", "Dark")):
+        pressed = "true" if choice == "auto" else "false"
+        assert (
+            f'<button type="button" data-theme-choice="{choice}" aria-pressed="{pressed}">'
+            f"{label}</button>" in html
+        )
+
+
+def test_theme_js_is_plain_and_guards_storage() -> None:
+    js = (STATIC_DIR / "theme.js").read_text()
+    for banned in (
+        "eval",
+        "innerHTML",
+        "outerHTML",
+        "insertAdjacentHTML",
+        "document.write",
+        "Function(",
+    ):
+        assert banned not in js, banned
+    assert "localStorage" in js
+    unguarded = re.sub(r"try \{[^{}]*\} catch \(\w*\) \{[^{}]*\}", "", js)
+    assert "localStorage" not in unguarded
+    assert "DOMContentLoaded" in js
+    assert "dataset.theme" in js

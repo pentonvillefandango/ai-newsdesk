@@ -14,6 +14,7 @@ from ai_newsdesk.models import (
     BriefingStory,
     Candidate,
     Category,
+    ConsolidationStory,
     JudgeResult,
     Purpose,
     ReviewInput,
@@ -28,7 +29,7 @@ from ai_newsdesk.models import (
 )
 from ai_newsdesk.pipeline import PipelineContext
 from ai_newsdesk.pricing import Pricing
-from ai_newsdesk.protocols import Clock, Source
+from ai_newsdesk.protocols import Clock, Consolidator, Source
 from ai_newsdesk.runtime_settings import RuntimeSettings
 from ai_newsdesk.store.store import Store
 
@@ -151,6 +152,42 @@ class RecordingWriter:
         return f"Briefing for {date_label}\n\n{body}", []
 
 
+class ScriptedConsolidator:
+    """Returns `groups` (or raises `error`); worst case `worst` USD, actual usage is small."""
+
+    model = MODEL
+
+    def __init__(
+        self,
+        groups: list[list[int]],
+        *,
+        worst: float = 0.001,
+        error: Exception | None = None,
+    ) -> None:
+        self.groups = groups
+        self.worst = worst
+        self.error = error
+        self.calls: list[list[ConsolidationStory]] = []
+
+    def worst_case_cost(self, stories: list[ConsolidationStory]) -> float:
+        return self.worst
+
+    async def find_groups(
+        self, stories: list[ConsolidationStory]
+    ) -> tuple[list[list[int]], list[Usage]]:
+        self.calls.append(list(stories))
+        if self.error is not None:
+            raise self.error
+        usage = Usage(
+            provider="anthropic",
+            model=MODEL,
+            purpose=Purpose.REVIEW,
+            input_tokens=500,
+            output_tokens=50,
+        )
+        return [list(g) for g in self.groups], [usage]
+
+
 def make_ctx(
     store: Store,
     clock: Clock,
@@ -158,6 +195,7 @@ def make_ctx(
     sources: dict[SourceKind, Source] | None = None,
     judge: ScriptedJudge | None = None,
     writer: RecordingWriter | None = None,
+    consolidator: Consolidator | None = None,
 ) -> PipelineContext:
     return PipelineContext(
         store=store,
@@ -170,4 +208,5 @@ def make_ctx(
         ),
         clock=clock,
         settings=cast(Settings, SimpleNamespace(tz="Europe/London")),
+        consolidator=consolidator,
     )

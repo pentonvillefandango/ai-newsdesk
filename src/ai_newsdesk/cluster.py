@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from ai_newsdesk.dedupe import find_story_link, title_tokens
-from ai_newsdesk.models import Category, ReviewInput, StoryRef, Verdict
+from ai_newsdesk.models import Category, ReviewInput, SourceKind, StoryRef, Verdict
 from ai_newsdesk.store.store import Store
 
 log = logging.getLogger(__name__)
@@ -79,6 +79,9 @@ async def attach(
 ) -> list[int]:
     """Attach shown items to stories; returns the touched story IDs in first-touch order.
 
+    Items from X account sources are never attached: they stay unlinked (story_id NULL) and are
+    shown on their own page, so Today is news stories only.
+
     `current` maps item IDs that already belong to a story (a `review_failed` item shown after an
     earlier run and now retried) to that story: such an item stays where it is and the story is
     rescored, so a retry never moves an item or leaves an empty story behind.
@@ -87,6 +90,8 @@ async def attach(
     attached: list[tuple[int, str, int | None]] = []
     touched: list[int] = []
     for j in judged:
+        if j.input.source_kind is SourceKind.X_PERSON:  # X posts never join stories
+            continue
         item_id, title = j.input.item_id, j.input.title
         story_id: int | None = current.get(item_id)
         if story_id is None:

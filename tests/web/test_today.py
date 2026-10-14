@@ -97,6 +97,27 @@ def test_top_view_orders_by_score_with_a_lead(app: FastAPI, client: TestClient) 
     assert f'class="story" id="story-{second}"' in r.text
 
 
+def test_top_view_puts_the_lead_above_a_grid_of_cards(app: FastAPI, client: TestClient) -> None:
+    src = _source(client, app)
+    lead = _story(client, app, src, "Lead story", "https://lab.example/1", signal=9)
+    other = _story(client, app, src, "Card story", "https://lab.example/2", signal=7)
+    third = _story(client, app, src, "Third story", "https://lab.example/3", signal=6)
+    text = client.get("/").text
+    assert text.count('<div class="cards">') == 1
+    grid = text.index('<div class="cards">')
+    assert text.index(f'id="story-{lead}"') < grid
+    assert grid < text.index(f'id="story-{other}"') < text.index(f'id="story-{third}"')
+
+
+def test_section_view_has_a_grid_under_each_heading(app: FastAPI, client: TestClient) -> None:
+    src = _source(client, app)
+    _story(client, app, src, "A paper", "https://lab.example/r", category=Category.RESEARCH)
+    _story(client, app, src, "A model", "https://lab.example/m", category=Category.MODEL_RELEASE)
+    text = client.get("/?view=category").text
+    assert text.count('<div class="cards">') == 2
+    assert text.index(">Model releases</h2>") < text.index('<div class="cards">')
+
+
 def test_section_view_groups_by_category(app: FastAPI, client: TestClient) -> None:
     src = _source(client, app)
     _story(

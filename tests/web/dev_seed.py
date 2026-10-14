@@ -13,9 +13,52 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from ai_newsdesk.models import Category, ItemStatus, Purpose, SourceKind, Trust, Usage
+from ai_newsdesk.models import (
+    Candidate,
+    Category,
+    ItemStatus,
+    Purpose,
+    SourceKind,
+    Trust,
+    Usage,
+    Verdict,
+)
 from ai_newsdesk.store import Store
 from tests.web import seed
+
+# (handle, hours since published or None, signal or None, post text). Fictional accounts only.
+X_POSTS = [
+    (
+        "example_researcher",
+        1,
+        8,
+        "New paper out today: we trained a 3B model on curated textbooks only and it beats our 7B baseline on maths.\nCode and data cards are linked in the repo.",
+    ),
+    (
+        "example_lab_lead",
+        3,
+        7,
+        "We are opening the evaluation harness we use internally. It includes the failure cases, not just the scores.",
+    ),
+    (
+        "example_researcher",
+        5,
+        None,
+        "Quick thread on why long-context benchmarks disagree so much with each other.",
+    ),
+    (
+        "example_engineer",
+        None,
+        None,
+        "Spent the weekend running the new small model locally. Latency is fine on a laptop GPU; quality is close to the hosted one for code review.",
+    ),
+    (
+        "example_lab_lead",
+        26,
+        6,
+        "Reminder: the office hours on interpretability tooling are on Thursday.",
+    ),
+]
 
 STORIES = [
     (
@@ -78,26 +121,25 @@ async def main(db_path: str) -> None:
         await store.seed_sources_if_empty(Path("config/sources.yaml"))
         lab = await seed.add_source(store, name="Northwind AI blog")
         paper = await seed.add_source(store, name="Halcyon Research", trust=Trust.TRUSTED)
-        person = await seed.add_source(
-            store,
-            name="A respected researcher",
-            kind=SourceKind.X_PERSON,
-            trust=Trust.TRUSTED,
-            config={"handle": "example_researcher"},
-        )
+        people: dict[str, int] = {}
+        for handle, name in (
+            ("example_researcher", "A respected researcher"),
+            ("example_lab_lead", "@example_lab_lead"),
+            ("example_engineer", "@example_engineer"),
+        ):
+            people[handle] = await seed.add_source(
+                store,
+                name=name,
+                kind=SourceKind.X_PERSON,
+                trust=Trust.TRUSTED,
+                config={"handle": handle},
+            )
         ids: list[int] = []
         for n, (category, signal, headline, summary, why) in enumerate(STORIES):
             sources = [(lab, f"https://northwind.example/post-{n}", headline)]
             if n < 2:
                 sources.append(
                     (paper, f"https://halcyon.example/note-{n}", f"Notes on: {headline}")
-                )
-                sources.append(
-                    (
-                        person,
-                        f"https://x.com/example_researcher/status/{1000 + n}",
-                        "Thread with a summary",
-                    )
                 )
             ids.append(
                 await seed.add_story(
@@ -111,6 +153,27 @@ async def main(db_path: str) -> None:
                     why=why,
                 )
             )
+        # X posts live on their own page (feedback-1), never in Today's stories.
+        for n, (handle, hours, signal, text) in enumerate(X_POSTS):
+            published = now - timedelta(hours=hours) if hours is not None else None
+            [item_id] = await store.add_candidates(
+                [
+                    Candidate(
+                        source_id=people[handle],
+                        url=f"https://x.com/{handle}/status/{2000 + n}",
+                        title=f"{handle} on X",
+                        author=handle,
+                        snippet=text,
+                        published_at=published,
+                    )
+                ],
+                now - timedelta(minutes=30 + n * 40),
+            )
+            if signal is not None:
+                verdict = Verdict(
+                    item_id=item_id, signal=signal, junk=False, category=Category.RESEARCH
+                )
+                await store.save_verdict(verdict, float(signal))
         await seed.add_item(
             store,
             source_id=lab,

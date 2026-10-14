@@ -148,3 +148,28 @@ def test_all_outbound_links_have_noopener(app: FastAPI, client: TestClient) -> N
     _briefing(client, app, date(2026, 10, 14), "[a](https://lab.example/model)", [sid])
     text = client.get("/briefing").text
     assert 'rel="noopener noreferrer" target="_blank">a</a>' in text
+
+
+def test_briefing_skips_story_ids_that_no_longer_exist(app: FastAPI, client: TestClient) -> None:
+    """Feedback-1 merges duplicate stories, so an old briefing can name a story id that is gone."""
+    store = app.state.store
+    src = run(client, seed.add_source, store, name="Example Lab")
+    sid = run(
+        client,
+        seed.add_story,
+        store,
+        at=NOW - timedelta(hours=3),
+        headline="A story that survived",
+        sources=[(src, "https://lab.example/kept", "Kept post")],
+    )
+    body = (
+        "[Kept story](https://lab.example/kept) and "
+        "[a merged one](https://lab.example/merged-away) are both named."
+    )
+    _briefing(client, app, date(2026, 10, 14), body, [sid, sid + 999])
+    for path in ("/briefing", "/briefing/2026-10-14"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert 'href="https://lab.example/kept"' in r.text
+        assert "merged-away" not in r.text
+        assert "a merged one" in r.text

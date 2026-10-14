@@ -26,6 +26,7 @@ from ai_newsdesk.models import (
     BriefingStory,
     Candidate,
     Category,
+    ConsolidationStory,
     ItemStatus,
     ReviewInput,
     SourceConfig,
@@ -42,6 +43,7 @@ from ai_newsdesk.models import (
     UsageStats,
     Verdict,
     WriteInput,
+    XPost,
 )
 from ai_newsdesk.protocols import Clock
 from ai_newsdesk.store.db import apply_migrations, connect
@@ -670,36 +672,107 @@ class Store:
 
     async def recompute_story_score(self, story_id: int) -> float:
         """Score = best item signal + STORY_SOURCE_BONUS per extra source. Tracks the lead
-        item; a new lead flags the story for (re)writing."""
+        item; a new lead flags the story for (re)writing. X posts never count (feedback-1)."""
+        async with self._tx() as conn:
+            return await self._recompute(conn, story_id)
+
+    @staticmethod
+    async def _recompute(conn: aiosqlite.Connection, story_id: int) -> float:
+        async with conn.execute(
+            "SELECT i.id, i.signal, i.source_id FROM items i JOIN sources s ON s.id = i.source_id"
+            " WHERE i.story_id = ? AND s.kind != 'x_person'"
+            " ORDER BY COALESCE(i.signal, -1) DESC, i.id ASC",
+            (story_id,),
+        ) as cur:
+            rows = list(await cur.fetchall())
+        async with conn.execute(
+            "SELECT lead_item_id FROM stories WHERE id = ?", (story_id,)
+        ) as cur:
+            story = await cur.fetchone()
+        if story is None:
+            raise KeyError(f"no story {story_id}")
+        if not rows:
+            score, lead = 0.0, None
+        else:
+            best = rows[0]["signal"] or 0.0
+            sources = len({r["source_id"] for r in rows})
+            score = float(best) + STORY_SOURCE_BONUS * (sources - 1)
+            lead = rows[0]["id"]
+        if lead != story["lead_item_id"]:
+            await conn.execute(
+                "UPDATE stories SET score = ?, lead_item_id = ?, needs_text = 1,"
+                " text_attempts = 0 WHERE id = ?",
+                (score, lead, story_id),
+            )
+        else:
+            await conn.execute("UPDATE stories SET score = ? WHERE id = ?", (score, story_id))
+        return score
+
+    async def consolidation_candidates(
+        self, now: dt.datetime, hours: int = 48, limit: int = 200
+    ) -> list[ConsolidationStory]:
+        """Open stories (updated in the last `hours`) with at least one item that is not an X
+        post, best score first (then oldest), at most `limit`."""
+        rows = await self._all(
+            "SELECT st.id, st.headline, st.category, st.score, st.first_seen_at"
+            " FROM stories st WHERE st.last_updated_at >= ?"
+            " AND EXISTS (SELECT 1 FROM items i JOIN sources s ON s.id = i.source_id"
+            "             WHERE i.story_id = st.id AND s.kind != 'x_person')"
+            " ORDER BY st.score DESC, st.first_seen_at ASC, st.id ASC LIMIT ?",
+            (_ts(now - dt.timedelta(hours=hours)), limit),
+        )
+        return [
+            ConsolidationStory(
+                id=r["id"],
+                headline=r["headline"],
+                category=Category(r["category"]),
+                score=float(r["score"]),
+                first_seen_at=_req_dt(r["first_seen_at"]),
+            )
+            for r in rows
+        ]
+
+    async def merge_stories(self, keep_id: int, merge_ids: list[int]) -> None:
+        """Fold `merge_ids` into `keep_id` in one transaction: move their items, carry the most
+        recent non-zero feedback when `keep_id` has none, keep the earliest first-seen and latest
+        update times, delete the merged stories, rescore and flag `keep_id` for rewriting.
+        Unknown ids (or an unknown `keep_id`) are skipped silently."""
+        others = sorted({i for i in merge_ids if i != keep_id})
+        if not others:
+            return
         async with self._tx() as conn:
             async with conn.execute(
-                "SELECT id, signal, source_id FROM items WHERE story_id = ?"
-                " ORDER BY COALESCE(signal, -1) DESC, id ASC",
-                (story_id,),
+                "SELECT id, feedback, feedback_at, first_seen_at, last_updated_at FROM stories"
+                " WHERE id IN (SELECT value FROM json_each(?))",
+                (json.dumps([keep_id, *others]),),
             ) as cur:
-                rows = list(await cur.fetchall())
-            async with conn.execute(
-                "SELECT lead_item_id FROM stories WHERE id = ?", (story_id,)
-            ) as cur:
-                story = await cur.fetchone()
-            if story is None:
-                raise KeyError(f"no story {story_id}")
-            if not rows:
-                score, lead = 0.0, None
-            else:
-                best = rows[0]["signal"] or 0.0
-                sources = len({r["source_id"] for r in rows})
-                score = float(best) + STORY_SOURCE_BONUS * (sources - 1)
-                lead = rows[0]["id"]
-            if lead != story["lead_item_id"]:
-                await conn.execute(
-                    "UPDATE stories SET score = ?, lead_item_id = ?, needs_text = 1,"
-                    " text_attempts = 0 WHERE id = ?",
-                    (score, lead, story_id),
-                )
-            else:
-                await conn.execute("UPDATE stories SET score = ? WHERE id = ?", (score, story_id))
-            return score
+                rows = {int(r["id"]): r for r in await cur.fetchall()}
+            keep = rows.pop(keep_id, None)
+            if keep is None or not rows:
+                return
+            merged = sorted(rows)
+            first_seen = min(r["first_seen_at"] for r in [keep, *rows.values()])
+            last_updated = max(r["last_updated_at"] for r in [keep, *rows.values()])
+            feedback, feedback_at = keep["feedback"], keep["feedback_at"]
+            if feedback == 0:
+                rated = [r for r in rows.values() if r["feedback"] != 0]
+                if rated:
+                    best = max(rated, key=lambda r: (r["feedback_at"] or "", r["id"]))
+                    feedback, feedback_at = best["feedback"], best["feedback_at"]
+            ids_json = json.dumps(merged)
+            await conn.execute(
+                "UPDATE items SET story_id = ? WHERE story_id IN (SELECT value FROM json_each(?))",
+                (keep_id, ids_json),
+            )
+            await conn.execute(
+                "DELETE FROM stories WHERE id IN (SELECT value FROM json_each(?))", (ids_json,)
+            )
+            await conn.execute(
+                "UPDATE stories SET first_seen_at = ?, last_updated_at = ?, feedback = ?,"
+                " feedback_at = ?, needs_text = 1, text_attempts = 0 WHERE id = ?",
+                (first_seen, last_updated, feedback, feedback_at, keep_id),
+            )
+            await self._recompute(conn, keep_id)
 
     async def stories_needing_text(self, limit: int, include_why: bool) -> list[WriteInput]:
         """Stories flagged for writing, best score first, each with its best 1-2 item texts."""
@@ -712,8 +785,10 @@ class Store:
         result: list[WriteInput] = []
         for story in stories:
             items = await self._all(
-                "SELECT title, body_excerpt, snippet FROM items WHERE story_id = ?"
-                " ORDER BY COALESCE(signal, -1) DESC, id ASC LIMIT 2",
+                "SELECT i.title, i.body_excerpt, i.snippet FROM items i"
+                " JOIN sources s ON s.id = i.source_id"
+                " WHERE i.story_id = ? AND s.kind != 'x_person'"
+                " ORDER BY COALESCE(i.signal, -1) DESC, i.id ASC LIMIT 2",
                 (story["id"],),
             )
             texts = [
@@ -756,12 +831,16 @@ class Store:
     ) -> list[Story]:
         """Stories updated in the last `hours` with score >= threshold, or with an item whose
         review failed (never hidden, whatever the score), best first, with every source item
-        (best signal first)."""
+        (best signal first). News only: X posts are ignored, and a story with nothing else is
+        not listed."""
         cutoff = _ts(now - dt.timedelta(hours=hours))
         rows = await self._all(
             "SELECT * FROM stories st WHERE st.last_updated_at >= ?"
+            " AND EXISTS (SELECT 1 FROM items i JOIN sources s ON s.id = i.source_id"
+            "      WHERE i.story_id = st.id AND s.kind != 'x_person')"
             " AND (st.score >= ? OR EXISTS (SELECT 1 FROM items i"
-            "      WHERE i.story_id = st.id AND i.status = 'review_failed'))"
+            "      JOIN sources s ON s.id = i.source_id WHERE i.story_id = st.id"
+            "      AND i.status = 'review_failed' AND s.kind != 'x_person'))"
             " ORDER BY st.score DESC, st.last_updated_at DESC, st.id DESC",
             (cutoff, threshold),
         )
@@ -769,7 +848,8 @@ class Store:
         for r in rows:
             items = await self._all(
                 "SELECT i.id, i.url, i.title, i.published_at, i.signal, s.name, s.kind"
-                " FROM items i JOIN sources s ON s.id = i.source_id WHERE i.story_id = ?"
+                " FROM items i JOIN sources s ON s.id = i.source_id"
+                " WHERE i.story_id = ? AND s.kind != 'x_person'"
                 " ORDER BY COALESCE(i.signal, -1) DESC, i.id ASC",
                 (r["id"],),
             )
@@ -803,12 +883,15 @@ class Store:
     async def top_stories_for_briefing(
         self, now: dt.datetime, limit: int = 15
     ) -> list[BriefingStory]:
-        """Summarised stories of the last 24 hours, best score first; url is the lead item's."""
+        """Summarised stories of the last 24 hours, best score first; url is the lead item's
+        (never an X post's)."""
         cutoff = _ts(now - dt.timedelta(hours=24))
         rows = await self._all(
             "SELECT st.id, st.headline, st.category, st.summary, i.url"
             " FROM stories st JOIN items i ON i.id = st.lead_item_id"
+            " JOIN sources s ON s.id = i.source_id"
             " WHERE st.last_updated_at >= ? AND st.summary IS NOT NULL"
+            " AND s.kind != 'x_person'"
             " ORDER BY st.score DESC, st.id ASC LIMIT ?",
             (cutoff, limit),
         )
@@ -1088,7 +1171,7 @@ class Store:
             "SELECT i.id AS item_id, i.story_id, i.url, i.title, i.published_at, i.signal,"  # noqa: S608
             " s.name AS source_name, s.kind AS source_kind"
             " FROM items i JOIN sources s ON s.id = i.source_id"
-            f" WHERE i.story_id IN ({marks})"
+            f" WHERE i.story_id IN ({marks}) AND s.kind != 'x_person'"
             " ORDER BY i.story_id, COALESCE(i.signal, -1) DESC, i.id",
             ids,
         )
@@ -1112,13 +1195,13 @@ class Store:
         self, now: dt.datetime, hours: int = 24, limit: int = 30
     ) -> list[UnscoredItem]:
         """Recent items with no verdict that are not already shown in a story, best heuristic
-        score first."""
+        score first. X posts are left out (they have their own page, `x_posts`)."""
         rows = await self._all(
             "SELECT i.id AS item_id, i.url, i.title, i.published_at, i.status,"
             " s.name AS source_name, s.kind AS source_kind"
             " FROM items i JOIN sources s ON s.id = i.source_id"
             " WHERE i.status IN ('review_failed', 'queued') AND i.story_id IS NULL"
-            " AND i.fetched_at >= ?"
+            " AND s.kind != 'x_person' AND i.fetched_at >= ?"
             " ORDER BY i.heuristic_score DESC, i.fetched_at DESC, i.id DESC LIMIT ?",
             (_ts(now - dt.timedelta(hours=hours)), limit),
         )
@@ -1134,3 +1217,37 @@ class Store:
             )
             for r in rows
         ]
+
+    async def x_posts(self, now: dt.datetime, days: int = 7, limit: int = 200) -> list[XPost]:
+        """Posts from X account sources fetched in the last `days`, newest first (published,
+        else fetched). Reviewed and unreviewed posts are included; dropped posts and posts the
+        judge marked junk are not."""
+        rows = await self._all(
+            "SELECT i.id, i.url, i.title, i.author, i.snippet, i.published_at, i.fetched_at,"
+            " i.signal, i.status, json_extract(i.judge_json, '$.junk') AS junk,"
+            " s.name AS source_name, s.config_json"
+            " FROM items i JOIN sources s ON s.id = i.source_id"
+            " WHERE s.kind = 'x_person' AND i.status != 'dropped' AND i.fetched_at >= ?"
+            " AND COALESCE(json_extract(i.judge_json, '$.junk'), 0) = 0"
+            " ORDER BY COALESCE(i.published_at, i.fetched_at) DESC, i.id DESC LIMIT ?",
+            (_ts(now - dt.timedelta(days=days)), limit),
+        )
+        posts: list[XPost] = []
+        for r in rows:
+            handle = r["author"] or str(json.loads(r["config_json"]).get("handle", ""))
+            posts.append(
+                XPost(
+                    item_id=r["id"],
+                    handle=handle.strip().lstrip("@"),
+                    source_name=r["source_name"],
+                    url=r["url"],
+                    title=r["title"],
+                    text=r["snippet"] or "",
+                    published_at=_dt(r["published_at"]),
+                    fetched_at=_req_dt(r["fetched_at"]),
+                    signal=round(r["signal"]) if r["signal"] is not None else None,
+                    status=ItemStatus(r["status"]),
+                    junk=bool(r["junk"]) if r["junk"] is not None else None,
+                )
+            )
+        return posts

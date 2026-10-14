@@ -8,6 +8,7 @@
   <meta name="theme-color" content="#121a25" media="(prefers-color-scheme: dark)">
   <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true,"historyCacheSize":0,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
   <title>{% block title %}Newsdesk{% endblock %}</title>
+  <script src="/static/theme.js"></script>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
 </head>
@@ -20,9 +21,15 @@
       <nav class="nav" aria-label="Main">
         <a href="/"{% if active == "today" %} aria-current="page"{% endif %}>Today</a>
         <a href="/briefing"{% if active == "briefing" %} aria-current="page"{% endif %}>Briefing</a>
+        <a href="/x"{% if active == "x" %} aria-current="page"{% endif %}>X</a>
         <a href="/sources"{% if active == "sources" %} aria-current="page"{% endif %}>Sources</a>
         <a href="/settings"{% if active == "settings" %} aria-current="page"{% endif %}>Settings</a>
       </nav>
+      <div class="theme" role="group" aria-label="Theme">
+        <button type="button" data-theme-choice="auto" aria-pressed="true">Auto</button>
+        <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+        <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+      </div>
       <form class="logout" method="post" action="/logout">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="link-button" type="submit">Log out</button>

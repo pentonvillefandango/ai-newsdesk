@@ -104,6 +104,16 @@ class Verdict(BaseModel):
     same_story_id: int | None = None
 
 
+class ConsolidationStory(BaseModel):
+    """An open story offered to the consolidation pass (feedback-1, A1)."""
+
+    id: int
+    headline: str
+    category: Category
+    score: float
+    first_seen_at: datetime
+
+
 class Usage(BaseModel):
     provider: str  # "anthropic" | "typesafe"
     model: str
@@ -177,6 +187,22 @@ class UnscoredItem(BaseModel):
     title: str
     published_at: datetime | None = None
     status: ItemStatus
+
+
+class XPost(BaseModel):
+    """A post from an X account source, for the X page (never part of a Today story)."""
+
+    item_id: int
+    handle: str  # the post's author, else the source's configured handle (no @)
+    source_name: str
+    url: str
+    title: str
+    text: str  # the search snippet
+    published_at: datetime | None = None
+    fetched_at: datetime
+    signal: int | None = None
+    status: ItemStatus
+    junk: bool | None = None  # None: not judged yet
 
 
 class SourceOverview(BaseModel):

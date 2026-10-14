@@ -8,10 +8,11 @@ A self-hosted, high-signal AI news feed. It collects news from AI labs and from 
 ## Features (V1)
 
 - Sources: lab feeds, trusted people on X (via research-engine `site:x.com/<handle>` searches), topic searches, Hacker News, arXiv and GitHub releases.
-- An AI judge (Claude Haiku by default; optional TypeSafe Jev) scores signal and junk; duplicates become one story with every source linked.
+- An AI judge (Claude Haiku by default; optional TypeSafe Jev) scores signal and junk; duplicates become one story with every source linked (a consolidation pass merges stories that report the same event). Posts from people on X are kept out of news stories and shown on their own X page (last 7 days, newest first).
 - Story summaries with an optional "why it matters" line, and a daily briefing.
 - A hard monthly AI budget (default $5), checked before every call.
 - Settings page: run frequency, caps, models, write-only API keys, spend meter.
+- Wide "lead + grid" layout on desktop, single column on phones; an Auto / Light / Dark theme toggle remembered per browser.
 - One owner password; lab-only behind a shared Caddy with HTTPS.
 
 ## Quick start
