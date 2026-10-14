@@ -1,0 +1,74 @@
+name: ai-newsdesk
+
+# Co-tenant stack on the shared toolbox VM: no host ports, no container_name, named volumes only,
+# hard limits and log rotation. Only Caddy (project `caddy`) reaches the app, over the external
+# `proxy` network, as `ai-newsdesk-app`. Policy-tested by tests/test_compose_policy.py.
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "5" }
+
+services:
+  app:
+    build:
+      context: .
+      args: { GIT_SHA: "${GIT_SHA:-unknown}" }
+    image: ai-newsdesk-app:${GIT_SHA:-dev}
+    restart: unless-stopped
+    # uvicorn graceful drain (5 s), then lifespan shutdown stops the scheduler; a run in flight
+    # is abandoned and picked up again by the next run (items stay queued).
+    stop_grace_period: 30s
+    user: "10001:10001"
+    read_only: true
+    tmpfs: ["/tmp:size=64m,noexec,nosuid,nodev"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    # Explicit mapping, never env_file, so compose-only values (APP_MEM_LIMIT, APP_CPUS, APP_PORT)
+    # never reach the app. Covers every Settings field (config.py); tests/test_compose_policy.py
+    # fails on drift. Defaults equal the Settings defaults. Keep .env.example in sync.
+    environment:
+      # identity and secrets
+      SITE_HOST: ${SITE_HOST:-ai-newsdesk.localhost}
+      SECRETS_KEY: ${SECRETS_KEY:?set SECRETS_KEY in .env (openssl rand -hex 32)}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env (openssl rand -hex 32)}
+      # argon2 hash written by `make set-password`, single-quoted in .env so `$` stays literal
+      OWNER_PASSWORD_HASH: ${OWNER_PASSWORD_HASH:-}
+      # API keys: fallbacks; keys saved on the Settings page win
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      RESEARCH_ENGINE_API_KEY: ${RESEARCH_ENGINE_API_KEY:-}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      # research-engine over the shared proxy network (its alias there)
+      RESEARCH_ENGINE_URL: ${RESEARCH_ENGINE_URL:-http://research-engine-app:8000}
+      # store (fixed: the app-data volume; .env's DB_PATH is for local runs only)
+      DB_PATH: /data/ai-newsdesk.sqlite
+      # runtime
+      TZ: ${TZ:-Europe/London}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      GIT_SHA: ${GIT_SHA:-unknown}
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+    # the image's /data is owned 10001; a fresh named volume inherits that ownership
+    volumes: ["app-data:/data"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits: { memory: "${APP_MEM_LIMIT:-512m}", cpus: "${APP_CPUS:-0.5}" }
+    logging: *logging
+    networks:
+      internal: {}
+      proxy:
+        aliases: [ai-newsdesk-app]
+
+networks:
+  internal: {}
+  # VM-wide network owned by the shared Caddy project (/opt/caddy); never created here
+  proxy:
+    external: true
+    name: proxy
+
+volumes:
+  app-data: {}

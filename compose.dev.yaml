@@ -1,0 +1,15 @@
+# Dev/test override. ALWAYS use it with its own project name, never the live one:
+#   docker compose -p ai-newsdesk-dev -f compose.yaml -f compose.dev.yaml up -d --build --wait
+# A dev-only image name (no ${GIT_SHA}): a dev `up --build` can never overwrite a live or
+# rollback `ai-newsdesk-app:<sha>` tag.
+services:
+  app:
+    image: ai-newsdesk-app-dev:local
+
+# Dev runs never join the VM-wide `proxy` network: a project-local one replaces it, so a dev
+# container can't reach research-engine-app or be reached by Caddy. Integration tests that need
+# research-engine run on the host with RESEARCH_ENGINE_URL pointing at the live one (README).
+networks:
+  proxy:
+    external: false
+    name: ai-newsdesk-dev-proxy
