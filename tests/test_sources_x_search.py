@@ -89,12 +89,19 @@ async def test_x_person_keeps_only_the_sources_own_posts() -> None:
     assert second.title == "Second post, no title from the engine."
 
 
-async def test_x_person_query_time_range_and_max() -> None:
+async def test_x_person_always_searches_the_past_week() -> None:
+    """A "day" search found too little (35 handles gave 12 posts); repeats are absorbed by the
+    canonical-URL dedupe, so X always searches a week, max 10 per handle unless configured."""
     engine = RecordingEngine()
     source = XPersonSource(engine, FixedClock(NOW))
     await source.collect(x_src("@simonw", max=6), NOW - timedelta(hours=6))
     await source.collect(x_src("simonw"), NOW - timedelta(days=3))
-    assert engine.calls == [("site:x.com simonw", 6, "day"), ("site:x.com simonw", 10, "week")]
+    await source.collect(x_src("simonw"), NOW - timedelta(hours=1))
+    assert engine.calls == [
+        ("site:x.com simonw", 6, "week"),
+        ("site:x.com simonw", 10, "week"),
+        ("site:x.com simonw", 10, "week"),
+    ]
 
 
 async def test_x_person_records_research_engine_failure() -> None:
