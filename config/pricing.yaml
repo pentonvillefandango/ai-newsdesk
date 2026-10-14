@@ -1,0 +1,20 @@
+# Model prices in USD per million tokens. Model IDs are exact API strings: never add dates.
+# Checked against the providers' price pages on the date below; update both together.
+as_of: "2026-10-14"
+models:
+  claude-haiku-5-5:
+    provider: anthropic
+    input_per_mtok: 0.10
+    output_per_mtok: 0.50
+  claude-sonnet-5-5:
+    provider: anthropic
+    input_per_mtok: 2.00
+    output_per_mtok: 10.00
+  claude-opus-5-5:
+    provider: anthropic
+    input_per_mtok: 4.00
+    output_per_mtok: 20.00
+  jev-1.13.0:
+    provider: typesafe
+    input_per_mtok: 0.042
+    output_per_mtok: 0.0
