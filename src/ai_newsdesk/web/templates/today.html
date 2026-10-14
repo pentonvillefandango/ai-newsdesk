@@ -39,17 +39,24 @@
         <h2 id="{{ group.slug }}-title">{{ group.label }}</h2>
         <span class="section__count">{{ group.stories|length }}</span>
       </div>
-      {% for story in group.stories %}
-      {% with lead = false %}{% include "partials/story_card.html" %}{% endwith %}
-      {% endfor %}
+      <div class="cards">
+        {% for story in group.stories %}
+        {% with lead = false %}{% include "partials/story_card.html" %}{% endwith %}
+        {% endfor %}
+      </div>
     </section>
     {% endfor %}
     {% elif stories %}
     <section aria-labelledby="top-title">
       <h2 id="top-title" class="visually-hidden">Top stories</h2>
-      {% for story in stories %}
-      {% with lead = loop.first %}{% include "partials/story_card.html" %}{% endwith %}
-      {% endfor %}
+      {% with story = stories[0], lead = true %}{% include "partials/story_card.html" %}{% endwith %}
+      {% if stories|length > 1 %}
+      <div class="cards">
+        {% for story in stories[1:] %}
+        {% with lead = false %}{% include "partials/story_card.html" %}{% endwith %}
+        {% endfor %}
+      </div>
+      {% endif %}
     </section>
     {% endif %}
     {% if unscored %}

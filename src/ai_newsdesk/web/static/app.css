@@ -51,7 +51,7 @@
 
   /* shape and layout */
   --measure: 40rem;
-  --wide: 70rem;
+  --wide: 84rem; /* masthead and page; narrower pages cap their own content */
   --radius-s: 4px;
   --radius-m: 8px;
   --radius-pill: 999px;
@@ -387,7 +387,8 @@ code {
   scroll-margin-top: var(--space-5);
 }
 
-.section + .section {
+.section + .section,
+.stream > * + .section {
   margin-top: var(--space-7);
 }
 
@@ -434,9 +435,12 @@ code {
 }
 
 @media (min-width: 64rem) {
+  .stream {
+    max-width: none;
+  }
   .today--indexed {
-    grid-template-columns: 11rem minmax(0, var(--measure));
-    column-gap: var(--space-8);
+    grid-template-columns: 11rem minmax(0, 1fr);
+    column-gap: var(--space-7);
   }
   .today--indexed .index {
     display: block;
@@ -748,6 +752,64 @@ code {
   border-bottom: 0;
 }
 
+/* ---------- Wide screens: a lead card above a grid of cards ---------- */
+@media (min-width: 64rem) {
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+    gap: var(--space-5);
+    align-items: stretch;
+  }
+  .section__head + .cards,
+  .story--lead + .cards {
+    margin-top: var(--space-5);
+  }
+  .cards > .story,
+  .story--lead {
+    padding: var(--space-5);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-m);
+    background: var(--surface);
+  }
+  .cards > .story:last-child {
+    border-bottom: 1px solid var(--rule);
+  }
+  .cards .story__body {
+    display: flex;
+    flex-direction: column;
+  }
+  .cards .story__headline {
+    font-size: var(--step-1);
+    line-height: var(--leading-head);
+  }
+  .cards .story__why {
+    font-size: var(--step-0);
+  }
+  /* The foot sits at the bottom so thumbs line up across a row of cards. */
+  .cards .story__foot {
+    margin-top: auto;
+    padding-top: var(--space-4);
+  }
+  .story--lead {
+    padding: var(--space-6);
+    column-gap: var(--space-5);
+  }
+  .story--lead .story__headline {
+    font-size: var(--step-4);
+    max-width: 30em;
+  }
+  .story--lead .story__summary,
+  .story--lead .story__why {
+    max-width: 46em;
+  }
+  .story--lead .story__summary {
+    font-size: var(--step-1);
+  }
+  .unscored {
+    max-width: 60rem;
+  }
+}
+
 .unscored__title {
   font-family: var(--font-display);
   font-size: var(--step-1);
@@ -1048,6 +1110,7 @@ select:focus-visible {
 }
 
 .kind {
+  max-width: 72rem;
   scroll-margin-top: var(--space-5);
 }
 
@@ -1145,7 +1208,7 @@ select:focus-visible {
 .settings {
   display: grid;
   gap: var(--space-7);
-  max-width: 54rem;
+  max-width: 60rem;
 }
 
 .panel {

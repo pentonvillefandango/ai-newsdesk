@@ -168,3 +168,34 @@ def test_chart_fills_its_width_and_form_fields_align_to_the_top() -> None:
     assert "width: 100%" in chart
     assert "max-height" not in chart
     assert "align-content: start" in _rule(css, ".field")
+
+
+def _media_blocks(css: str, query: str) -> list[str]:
+    """The bodies of every `@media <query> { ... }` block (brace-matched)."""
+    bodies: list[str] = []
+    start = 0
+    while (at := css.find(f"@media {query} {{", start)) != -1:
+        i = css.index("{", at) + 1
+        depth = 1
+        j = i
+        while depth:
+            depth += {"{": 1, "}": -1}.get(css[j], 0)
+            j += 1
+        bodies.append(css[i : j - 1])
+        start = j
+    return bodies
+
+
+def test_wide_screens_get_a_wide_page_and_a_card_grid() -> None:
+    css = (STATIC_DIR / "app.css").read_text()
+    wide = re.search(r"--wide:\s*([\d.]+)rem;", css)
+    assert wide and 80 <= float(wide.group(1)) <= 84
+    assert "max-width: var(--wide)" in _rule(css, ".page")
+    desktop = "\n".join(_media_blocks(css, "(min-width: 64rem)"))
+    assert "repeat(auto-fill, minmax(20rem, 1fr))" in _rule(desktop, "  .cards")
+    assert "max-width: none" in _rule(desktop, "  .stream")
+    # Forms and lists stay readable on the wide page.
+    sources = re.search(r"max-width:\s*([\d.]+)rem", _rule(css, ".kind"))
+    assert sources and float(sources.group(1)) <= 72
+    settings = re.search(r"max-width:\s*([\d.]+)rem", _rule(css, ".settings"))
+    assert settings and float(settings.group(1)) <= 72
