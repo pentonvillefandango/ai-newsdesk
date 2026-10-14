@@ -260,6 +260,7 @@ def test_spend_meter_chart_and_last_runs(app: FastAPI, client: TestClient) -> No
     text = client.get("/settings").text
     assert '<span class="meter__spent">$0.12</span>' in text
     assert 'class="chart__bar"' in text
+    assert 'class="chart" width="100%" preserveAspectRatio="none" viewBox="0 0 ' in text
     assert "Wed 14 Oct: $0.12" in text
     assert "boom &lt;x&gt;" in text
     assert "30 min ago" in text

@@ -147,3 +147,24 @@ def test_light_accent_meets_wcag_aa_for_small_text() -> None:
     assert set(tokens) == {"accent", "paper", "surface"}
     for bg in ("paper", "surface"):
         assert _contrast(tokens["accent"], tokens[bg]) >= 4.5, bg
+
+
+def _rule(css: str, selector: str) -> str:
+    match = re.search(rf"(?:^|\n){re.escape(selector)}\s*\{{([^}}]*)\}}", css)
+    assert match, selector
+    return match.group(1)
+
+
+def test_briefing_links_inherit_the_reading_font() -> None:
+    css = (STATIC_DIR / "app.css").read_text()
+    body = _rule(css, ".ref")
+    assert "font-family: inherit" in body
+    assert "font-size: inherit" in body
+
+
+def test_chart_fills_its_width_and_form_fields_align_to_the_top() -> None:
+    css = (STATIC_DIR / "app.css").read_text()
+    chart = _rule(css, ".chart")
+    assert "width: 100%" in chart
+    assert "max-height" not in chart
+    assert "align-content: start" in _rule(css, ".field")

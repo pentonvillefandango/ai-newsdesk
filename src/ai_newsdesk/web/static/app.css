@@ -790,11 +790,10 @@ code {
 }
 
 .ref {
-  font-family: var(--font-body);
-  font-size: var(--step--1);
+  font-family: inherit;
+  font-size: inherit;
   color: var(--ink-2);
   text-decoration-color: var(--accent);
-  white-space: nowrap;
 }
 
 .archive h2 {
@@ -915,6 +914,7 @@ code {
 
 .field {
   display: grid;
+  align-content: start;
   gap: var(--space-2);
   min-width: 0;
 }
@@ -1247,8 +1247,11 @@ select:focus-visible {
 .chart {
   display: block;
   width: 100%;
-  height: auto;
-  max-height: 12rem;
+  height: 8rem;
+}
+
+.chart line {
+  vector-effect: non-scaling-stroke;
 }
 
 .chart__bar {
