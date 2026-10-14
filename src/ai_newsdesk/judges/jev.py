@@ -205,12 +205,18 @@ class JevJudge:
                     try:
                         async with sem:
                             r = await client.system_one(state=state_for(inp), questions=questions)
-                        tokens += int(r.usage.input_tokens or 0)
-                        verdicts.append(verdict_from_answers(inp.item_id, r.answers))
                     except Exception as exc:  # one item fails, not the batch
                         log.warning("jev item %d failed: %s", inp.item_id, type(exc).__name__)
-                        # It may still have been billed: count its worst case.
+                        # It may still have been billed, usage unknown: count its worst case.
                         tokens += self.item_worst_tokens(inp)
+                        failed.append(inp.item_id)
+                        return
+                    # The call succeeded: its reported usage is the cost, once, parsed or not.
+                    tokens += int(r.usage.input_tokens or 0)
+                    try:
+                        verdicts.append(verdict_from_answers(inp.item_id, r.answers))
+                    except Exception as exc:
+                        log.warning("jev item %d unparseable: %s", inp.item_id, type(exc).__name__)
                         failed.append(inp.item_id)
 
                 await asyncio.gather(*(one(i) for i in inputs))
