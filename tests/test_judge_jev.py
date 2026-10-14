@@ -106,6 +106,26 @@ async def test_review_tolerates_per_item_failures(monkeypatch: pytest.MonkeyPatc
     assert client.states[0]["source"] == {"name": "Lab blog", "kind": "feed", "trust": "primary"}
 
 
+class UnparseableJevClient(FakeJevClient):
+    """Answers every call (billed 1200 tokens) with answers that can't become a verdict."""
+
+    async def system_one(self, *, state: dict[str, Any], questions: dict[str, Any]) -> Any:
+        self.states.append(state)
+        return SimpleNamespace(answers={}, usage=SimpleNamespace(input_tokens=1200))
+
+
+async def test_an_unparseable_answer_counts_its_real_tokens_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(jev, "build_questions", lambda: {})
+    judge = JevJudge("key", PRICING, client_factory=lambda: UnparseableJevClient(set()))
+    result = await judge.review([inp(1)])
+    assert result.verdicts == []
+    assert result.failed_item_ids == [1]
+    # The call succeeded, so its reported usage is known: no worst case on top.
+    assert [u.input_tokens for u in result.usage] == [1200]
+
+
 async def test_missing_sdk_fails_every_item(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom() -> dict[str, Any]:
         raise ImportError("typesafe_sdk")
