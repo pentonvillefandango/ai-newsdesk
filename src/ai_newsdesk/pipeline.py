@@ -1,0 +1,358 @@
+"""One collection-and-review run, and the daily briefing.
+
+Failures are local: a source, an item or an AI batch that fails is recorded and the run carries
+on. Every AI call is preceded by a budget pre-check using that call's worst-case cost. Nothing is
+retried within a run: an item the judge fails on is marked `review_failed` (and shown), and
+`Store.queued_review_inputs` offers it again on the next run, up to MAX_REVIEW_ATTEMPTS; a story
+the writer leaves out is counted with `Store.mark_text_failed` and offered again the same way.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
+
+from ai_newsdesk import cluster, prefilter
+from ai_newsdesk.briefing import briefing_date_label
+from ai_newsdesk.budget import Budget
+from ai_newsdesk.config import Settings
+from ai_newsdesk.dedupe import DEDUPE_WINDOW_HOURS, find_story_link
+from ai_newsdesk.enrich import enrich_bodies
+from ai_newsdesk.models import (
+    Candidate,
+    ItemStatus,
+    ReviewInput,
+    SourceConfig,
+    SourceKind,
+    SourceResult,
+    Verdict,
+)
+from ai_newsdesk.protocols import Clock, Judge, ResearchEngine, Source, Writer
+from ai_newsdesk.runtime_settings import RuntimeSettings, load_runtime_settings
+from ai_newsdesk.store.store import Store
+
+log = logging.getLogger(__name__)
+
+SOURCE_TIMEOUT_S = 60.0
+REVIEW_BATCH = 10
+WRITE_BATCH = 10
+WRITE_LIMIT = 50
+QUEUE_EXPIRY_HOURS = 48
+BRIEFING_STORY_LIMIT = 15
+
+COUNT_KEYS = (
+    "sources",
+    "sources_failed",
+    "collected",
+    "new",
+    "near_duplicates",
+    "dropped",
+    "queued",
+    "enrich_failed",
+    "expired",
+    "reviewed",
+    "review_failed",
+    "budget_skipped",
+    "stories_touched",
+    "written",
+    "write_failed",
+)
+
+
+@dataclass
+class PipelineContext:
+    store: Store
+    sources: dict[SourceKind, Source]
+    research_engine: ResearchEngine
+    judge: Judge
+    writer: Writer
+    budget: Budget
+    clock: Clock
+    settings: Settings
+
+
+@dataclass
+class RunReport:
+    run_id: int
+    counts: dict[str, int] = field(default_factory=lambda: dict.fromkeys(COUNT_KEYS, 0))
+    cost_usd: float = 0.0
+    error: str | None = None
+
+
+def stored_signal(verdict: Verdict, source_weight: float) -> int:
+    if verdict.junk:
+        return 0
+    return max(0, min(10, round(verdict.signal * source_weight)))
+
+
+def collection_window(runs_per_day: int) -> timedelta:
+    return timedelta(hours=max(6.0, 48.0 / max(1, runs_per_day)))
+
+
+def with_runtime_defaults(src: SourceConfig, rs: RuntimeSettings) -> SourceConfig:
+    """Fill per-kind config from runtime settings: an `hn` source without its own `min_points`
+    gets `hn_min_points` (master plan R9)."""
+    if src.kind == SourceKind.HN and "min_points" not in src.config:
+        return src.model_copy(update={"config": {**src.config, "min_points": rs.hn_min_points}})
+    return src
+
+
+def _affordable[T](budget: Budget, estimate: Callable[[list[T]], float], items: list[T]) -> bool:
+    try:
+        worst = estimate(items)
+    except Exception:  # an estimate we cannot make is a call we do not send
+        log.exception("worst-case cost estimate failed; call skipped")
+        return False
+    return budget.can_afford(worst)
+
+
+async def _collect_one(adapter: Source | None, src: SourceConfig, since: datetime) -> SourceResult:
+    if adapter is None:
+        return SourceResult(source_id=src.id, error=f"no adapter for kind {src.kind.value}")
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    try:
+        result = await asyncio.wait_for(adapter.collect(src, since), SOURCE_TIMEOUT_S)
+    except TimeoutError:
+        return SourceResult(
+            source_id=src.id,
+            error=f"timed out after {SOURCE_TIMEOUT_S:.0f} s",
+            duration_s=loop.time() - started,
+        )
+    except Exception as exc:  # one source never fails the run
+        return SourceResult(
+            source_id=src.id,
+            error=f"{type(exc).__name__}: {exc}"[:300],
+            duration_s=loop.time() - started,
+        )
+    return result.model_copy(update={"source_id": src.id})
+
+
+async def run_once(ctx: PipelineContext, trigger: str) -> RunReport:
+    run_id = await ctx.store.start_run(trigger, ctx.clock.now())
+    report = RunReport(run_id=run_id)
+    try:
+        await _run(ctx, report)
+    except Exception as exc:  # recorded on the run, never raised
+        log.exception("run %d failed", run_id)
+        report.error = f"{type(exc).__name__}: {exc}"[:500]
+    await ctx.store.finish_run(
+        run_id, ctx.clock.now(), report.counts, report.cost_usd, report.error
+    )
+    return report
+
+
+async def _run(ctx: PipelineContext, report: RunReport) -> None:
+    rs = await load_runtime_settings(ctx.store)
+    ctx.budget.runtime = rs
+    await ctx.budget.refresh()
+    now = ctx.clock.now()
+    new_items = await _collect(ctx, rs, now, report)
+    queued_ids = await _prefilter(ctx, new_items, report)
+    if queued_ids:
+        try:
+            await enrich_bodies(ctx.store, ctx.research_engine, queued_ids)
+        except Exception:  # snippets are the fall-back
+            log.exception("article enrichment failed; snippets will be used")
+            report.counts["enrich_failed"] = 1
+    report.counts["expired"] = await ctx.store.expire_old_queued(now, hours=QUEUE_EXPIRY_HOURS)
+    await _review(ctx, rs, now, report)
+    await _write(ctx, rs, report)
+
+
+async def _collect(
+    ctx: PipelineContext, rs: RuntimeSettings, now: datetime, report: RunReport
+) -> list[tuple[int, Candidate, SourceConfig]]:
+    sources = await ctx.store.list_sources(enabled_only=True)
+    since = now - collection_window(rs.runs_per_day)
+    results = await asyncio.gather(
+        *(
+            _collect_one(ctx.sources.get(s.kind), with_runtime_defaults(s, rs), since)
+            for s in sources
+        )
+    )
+    counts = report.counts
+    counts["sources"] = len(sources)
+    new_items: list[tuple[int, Candidate, SourceConfig]] = []
+    for src, result in zip(sources, results, strict=True):
+        await ctx.store.record_source_result(result, now)
+        if result.error:
+            counts["sources_failed"] += 1
+            log.warning("source %s failed: %s", src.name, result.error)
+        for cand in result.candidates:
+            counts["collected"] += 1
+            fixed = cand.model_copy(update={"source_id": src.id})
+            for item_id in await ctx.store.add_candidates([fixed], now):
+                new_items.append((item_id, fixed, src))
+    counts["new"] = len(new_items)
+    return new_items
+
+
+async def _prefilter(
+    ctx: PipelineContext,
+    new_items: list[tuple[int, Candidate, SourceConfig]],
+    report: RunReport,
+) -> list[int]:
+    if not new_items:
+        return []
+    recent = await ctx.store.recent_titles(DEDUPE_WINDOW_HOURS)
+    linked = {
+        item_id
+        for item_id, cand, _ in new_items
+        if find_story_link(item_id, cand.title, recent) is not None
+    }
+    rows = [
+        prefilter.PrefilterInput(
+            item_id=item_id,
+            source=src,
+            title=cand.title,
+            author=cand.author,
+            snippet=cand.snippet,
+            hn_points=cand.hn_points,
+        )
+        for item_id, cand, src in new_items
+    ]
+    others = prefilter.corroboration(rows, linked)
+    blocklist = await prefilter.load_blocklist(ctx.store)
+    keep: list[int] = []
+    drop: list[int] = []
+    for row in rows:
+        decision = prefilter.decide(row, others.get(row.item_id, 0), blocklist)
+        await ctx.store.set_item_fields(decision.item_id, heuristic_score=decision.score)
+        (keep if decision.keep else drop).append(decision.item_id)
+    if keep:
+        await ctx.store.mark_items(keep, ItemStatus.QUEUED)
+    if drop:
+        await ctx.store.mark_items(drop, ItemStatus.DROPPED)
+    report.counts.update(near_duplicates=len(linked), queued=len(keep), dropped=len(drop))
+    return keep
+
+
+async def _judge_all(
+    ctx: PipelineContext,
+    inputs: list[ReviewInput],
+    verdicts: dict[int, Verdict],
+    failed: list[ReviewInput],
+    report: RunReport,
+) -> list[ReviewInput]:
+    """Judge in batches; returns the inputs never sent because the budget ran out."""
+    for start in range(0, len(inputs), REVIEW_BATCH):
+        batch = inputs[start : start + REVIEW_BATCH]
+        if not _affordable(ctx.budget, ctx.judge.worst_case_cost, batch):
+            log.warning("monthly budget reached: %d items stay queued", len(inputs) - start)
+            return inputs[start:]
+        try:
+            result = await ctx.judge.review(batch)
+        except Exception:  # Judge.review should never raise; be safe anyway
+            log.exception("judge raised; batch counted as failed")
+            failed.extend(batch)
+            continue
+        for usage in result.usage:
+            report.cost_usd += await ctx.budget.record(usage)
+        ids = {i.item_id for i in batch}
+        got = {v.item_id: v for v in result.verdicts if v.item_id in ids}
+        verdicts.update(got)
+        failed.extend(i for i in batch if i.item_id not in got)
+    return []
+
+
+async def _review(
+    ctx: PipelineContext, rs: RuntimeSettings, now: datetime, report: RunReport
+) -> None:
+    limit = ctx.budget.remaining_reviews_today()
+    if limit <= 0:
+        return
+    queued = await ctx.store.queued_review_inputs(limit, now)
+    if not queued:
+        return
+    stories = await ctx.store.open_stories(now, hours=DEDUPE_WINDOW_HOURS)
+    recent = await ctx.store.recent_titles(DEDUPE_WINDOW_HOURS)
+    links = cluster.dedupe_links(queued, recent)
+    # A retried review_failed item is already shown in a story; it stays there.
+    queued_ids = {q.item_id for q in queued}
+    current = {iid: sid for iid, _, sid in recent if iid in queued_ids and sid is not None}
+    inputs = cluster.with_candidates(queued, stories, links)
+
+    verdicts: dict[int, Verdict] = {}
+    failed: list[ReviewInput] = []
+    unsent = await _judge_all(ctx, inputs, verdicts, failed, report)
+    report.counts["budget_skipped"] = len(unsent)
+
+    weights = {(s.kind, s.name): s.weight for s in await ctx.store.list_sources(enabled_only=False)}
+    failed_ids = {f.item_id for f in failed}
+    judged: list[cluster.Judged] = []
+    for inp in inputs:
+        verdict = verdicts.get(inp.item_id)
+        if verdict is not None:
+            signal = stored_signal(verdict, weights.get((inp.source_kind, inp.source_name), 1.0))
+            await ctx.store.save_verdict(verdict, signal)
+            judged.append(cluster.Judged(inp, verdict, signal))
+        elif inp.item_id in failed_ids:
+            judged.append(cluster.Judged(inp, None, None))
+    if failed_ids:  # retried on the next run by queued_review_inputs (R2)
+        await ctx.store.mark_items(sorted(failed_ids), ItemStatus.REVIEW_FAILED)
+    ctx.budget.note_reviewed(len(verdicts) + len(failed_ids))
+    report.counts["reviewed"] = len(verdicts)
+    report.counts["review_failed"] = len(failed_ids)
+    touched = await cluster.attach(ctx.store, judged, links, rs.show_threshold, now, current)
+    report.counts["stories_touched"] = len(touched)
+
+
+async def _write(ctx: PipelineContext, rs: RuntimeSettings, report: RunReport) -> None:
+    inputs = await ctx.store.stories_needing_text(WRITE_LIMIT, rs.why_it_matters)
+    for start in range(0, len(inputs), WRITE_BATCH):
+        batch = inputs[start : start + WRITE_BATCH]
+        if not _affordable(ctx.budget, ctx.writer.worst_case_cost_stories, batch):
+            log.warning("monthly budget reached: %d stories left unsummarised", len(inputs) - start)
+            return
+        try:
+            texts, usage = await ctx.writer.write_stories(batch)
+        except Exception:  # Writer should never raise; be safe anyway
+            log.exception("writer raised; batch counted as failed")
+            texts, usage = [], []
+        for u in usage:
+            report.cost_usd += await ctx.budget.record(u)
+        wanted = {w.story_id: w for w in batch}
+        written: set[int] = set()
+        for text in texts:
+            inp = wanted.get(text.story_id)
+            if inp is None or text.story_id in written:
+                continue
+            if not inp.include_why:
+                text = text.model_copy(update={"why_it_matters": None})
+            await ctx.store.save_story_text(text)
+            written.add(text.story_id)
+        missing = [w.story_id for w in batch if w.story_id not in written]
+        if missing:  # offered again next run until MAX_TEXT_ATTEMPTS
+            await ctx.store.mark_text_failed(missing)
+        report.counts["written"] += len(written)
+        report.counts["write_failed"] += len(missing)
+
+
+async def run_briefing(ctx: PipelineContext, day: date) -> bool:
+    rs = await load_runtime_settings(ctx.store)
+    ctx.budget.runtime = rs
+    await ctx.budget.refresh()
+    now = ctx.clock.now()
+    stories = await ctx.store.top_stories_for_briefing(now, limit=BRIEFING_STORY_LIMIT)
+    if not stories:
+        log.info("no stories for the %s briefing", day.isoformat())
+        return False
+    if not _affordable(ctx.budget, ctx.writer.worst_case_cost_briefing, stories):
+        log.warning("monthly budget reached: no briefing for %s", day.isoformat())
+        return False
+    try:
+        body, usage = await ctx.writer.write_briefing(stories, briefing_date_label(day))
+    except Exception:  # Writer should never raise; be safe anyway
+        log.exception("briefing writer raised")
+        return False
+    for u in usage:
+        await ctx.budget.record(u)
+    if not body:
+        return False
+    model = usage[0].model if usage else ctx.writer.model
+    await ctx.store.save_briefing(day, model, body, [s.story_id for s in stories], now)
+    return True
