@@ -55,6 +55,16 @@ class SdkPool:
             )
         return self._openai[provider]
 
+    async def aclose(self) -> None:
+        """Close the SDK clients this pool built (a one-off pool, like the Test button's).
+        An injected test http client belongs to its owner and stays open."""
+        if self._http is not None:
+            return
+        if self._anthropic is not None:
+            await self._anthropic.close()
+        for sdk in self._openai.values():
+            await sdk.close()
+
 
 def make_client(
     provider: str,

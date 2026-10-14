@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Settings on Newsdesk{% endblock %}
+{% block scripts %}<script src="/static/settings.js" defer></script>{% endblock %}
 {% block content %}
 {% macro aria(name, hint=false) %}{% if hint or errors.get(name) %} aria-describedby="{% if hint %}{{ name }}-hint{% endif %}{% if hint and errors.get(name) %} {% endif %}{% if errors.get(name) %}{{ name }}-error{% endif %}"{% endif %}{% if errors.get(name) %} aria-invalid="true"{% endif %}{% endmacro %}
 {% macro error(name) %}{% if errors.get(name) %}<p class="field__error" id="{{ name }}-error">{{ errors[name] }}</p>{% endif %}{% endmacro %}
@@ -16,6 +17,8 @@
 <div class="settings">
   <form class="settings" method="post" action="/settings">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {# Enter in a field submits the first submit button: make that Save, not a Test button. #}
+    <button class="visually-hidden" type="submit" tabindex="-1" aria-hidden="true">Save settings</button>
 
     <section class="panel" id="schedule" aria-labelledby="schedule-title">
       <div class="panel__head">
@@ -27,10 +30,10 @@
           <label for="runs_per_day">Update frequency</label>
           <select id="runs_per_day" name="runs_per_day"{{ aria("runs_per_day", true) }}>
             {% for opt in frequency_options %}
-            <option value="{{ opt.runs }}"{% if values.runs_per_day == opt.runs|string %} selected{% endif %}>{{ opt.label }}, about {{ usd(opt.monthly) }} a month{% if opt.over_budget %} (over budget){% endif %}</option>
+            <option value="{{ opt.runs }}"{% if values.runs_per_day == opt.runs|string %} selected{% endif %}>{{ opt.label }}{% if opt.monthly is none %}, cost unknown{% else %}, about {{ usd(opt.monthly) }} a month{% endif %}{% if opt.over_budget %} (over budget){% endif %}</option>
             {% endfor %}
           </select>
-          <p class="field__hint" id="runs_per_day-hint">{% if rates.from_history %}Estimates use the last 7 days: about {{ rates.items_per_run|round|int }} items reviewed a run.{% else %}Estimates use starting figures until there are a few days of history.{% endif %}</p>
+          <p class="field__hint" id="runs_per_day-hint">{% if estimate_unknown %}A chosen model has no known price, so there is no estimate. {% endif %}{% if profile.from_history %}Estimates use the last 7 days: about {{ profile.items_per_run|round|int }} items reviewed a run, priced with the models chosen below.{% else %}Estimates use starting figures, priced with the models chosen below, until there are a few days of history.{% endif %}</p>
           {{ error("runs_per_day") }}
         </div>
         <div class="grid-2">
@@ -76,48 +79,69 @@
     <section class="panel" id="models" aria-labelledby="models-title">
       <div class="panel__head">
         <h2 id="models-title">Models</h2>
-        <p>Prices come from config/pricing.yaml. Changes apply from the next run.</p>
+        <p>Each job can use its own provider and model. Prices come from config/pricing.yaml and the OpenRouter model list. Changes apply from the next run.</p>
       </div>
       <div class="panel__body">
-        <div class="field">
-          <label for="judge_provider">Judge</label>
-          <select id="judge_provider" name="judge_provider"{{ aria("judge_provider") }}>
-            <option value="anthropic"{% if values.judge_provider == "anthropic" %} selected{% endif %}>Claude (Anthropic)</option>
-            <option value="typesafe"{% if values.judge_provider == "typesafe" %} selected{% endif %}>Jev (TypeSafe)</option>
-          </select>
-          {{ error("judge_provider") }}
+        {% if model_list_flash %}
+        <div class="notice notice--ok" role="status"><p>{{ model_list_flash }}</p></div>
+        {% endif %}
+        <div class="model-list">
+          <p class="field__hint">{% if catalogue_at %}Model list updated {{ ago(catalogue_at, now) }}.{% else %}Model list not loaded yet.{% endif %}</p>
+          <button class="button button--quiet button--small" type="submit" form="model-list-refresh"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-refresh"></use></svg>Refresh model list</button>
         </div>
-        <div class="field">
-          <label for="judge_model">Judge model</label>
-          <select id="judge_model" name="judge_model"{{ aria("judge_model") }}>
-            {% for m in models %}
-            <option value="{{ m.id }}"{% if values.judge_model == m.id %} selected{% endif %}>{{ m.label }}</option>
-            {% endfor %}
-          </select>
-          {{ error("judge_model") }}
-        </div>
-        <div class="grid-2">
-          <div class="field">
-            <label for="writer_model">Summary writer</label>
-            <select id="writer_model" name="writer_model"{{ aria("writer_model") }}>
-              {% for m in models if m.provider == "anthropic" %}
-              <option value="{{ m.id }}"{% if values.writer_model == m.id %} selected{% endif %}>{{ m.label }}</option>
-              {% endfor %}
-            </select>
-            {{ error("writer_model") }}
+        {% if judge_warning %}
+        <div class="notice notice--warn" id="judge-warning" role="note"><p>{{ judge_warning }}</p></div>
+        {% endif %}
+        {% for row in model_rows %}
+        {% set p = row.job ~ "_provider" %}
+        {% set m = row.job ~ "_model" %}
+        {% set o = row.job ~ "_model_other" %}
+        <fieldset class="model-row" id="model-{{ row.job }}" aria-describedby="{{ row.job }}-hint">
+          <legend>{{ row.label }}</legend>
+          <p class="field__hint" id="{{ row.job }}-hint">{{ row.hint }}</p>
+          <div class="model-row__fields">
+            <div class="field">
+              <label for="{{ p }}">Provider</label>
+              <select id="{{ p }}" name="{{ p }}" data-provider-for="{{ row.job }}"{{ aria(p) }}>
+                {% for value, label in row.providers %}
+                <option value="{{ value }}"{% if row.provider == value %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+              {{ error(p) }}
+            </div>
+            <div class="field">
+              <label for="{{ m }}">Model</label>
+              <select id="{{ m }}" name="{{ m }}" data-models-for="{{ row.job }}"{{ aria(m) }}>
+                <option value=""{% if not row.selected %} selected{% endif %}>Other model (type it in the next box)</option>
+                {% for g in row.groups %}
+                <optgroup label="{{ g.label }}" data-provider="{{ g.provider }}">
+                  {% for opt in g.options %}
+                  <option value="{{ opt.id }}"{% if not opt.usable %} disabled{% elif opt.id == row.selected %} selected{% endif %}>{{ opt.label }}</option>
+                  {% endfor %}
+                </optgroup>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="field">
+              <label for="{{ o }}">Other model</label>
+              <input id="{{ o }}" name="{{ o }}" type="text" list="models-{{ row.provider }}" value="{{ row.other }}" autocomplete="off" spellcheck="false" placeholder="Model id, e.g. vendor/model" data-other-for="{{ row.job }}" aria-describedby="{{ o }}-hint{% if errors.get(m) %} {{ m }}-error{% endif %}"{% if errors.get(m) %} aria-invalid="true"{% endif %}>
+              <p class="field__hint" id="{{ o }}-hint">Used instead of the list when filled in.</p>
+            </div>
           </div>
-          <div class="field">
-            <label for="briefing_model">Briefing writer</label>
-            <select id="briefing_model" name="briefing_model"{{ aria("briefing_model") }}>
-              {% for m in models if m.provider == "anthropic" %}
-              <option value="{{ m.id }}"{% if values.briefing_model == m.id %} selected{% endif %}>{{ m.label }}</option>
-              {% endfor %}
-            </select>
-            {{ error("briefing_model") }}
+          {{ error(m) }}
+          <div class="model-row__test">
+            <button class="button button--quiet button--small" type="submit" formaction="/settings/models/test" name="test_job" value="{{ row.job }}" hx-post="/settings/models/test" hx-target="#test-{{ row.job }}" hx-swap="innerHTML">Test</button>
+            <div class="model-row__result" id="test-{{ row.job }}" aria-live="polite">{% if model_tests.get(row.job) %}{% set t = model_tests[row.job] %}{% include "partials/model_test.html" %}{% endif %}</div>
           </div>
-        </div>
-        {# Choices made elsewhere (Compare, later the provider rows) are checked on save too. #}
-        {% for name in ("writer_provider", "briefing_provider", "consolidator_provider", "consolidator_model") %}{{ error(name) }}{% endfor %}
+        </fieldset>
+        {% endfor %}
+        {% for d in datalists %}
+        <datalist id="models-{{ d.provider }}">
+          {% for opt in d.options %}
+          <option value="{{ opt.id }}">{{ opt.label }}</option>
+          {% endfor %}
+        </datalist>
+        {% endfor %}
       </div>
     </section>
 
@@ -153,6 +177,9 @@
     <div class="form__actions">
       <button class="button" type="submit">Save settings</button>
     </div>
+  </form>
+  <form id="model-list-refresh" method="post" action="/settings/models/refresh" hidden>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   </form>
 
   <section class="panel" id="keys" aria-labelledby="keys-title">

@@ -45,10 +45,15 @@ class _Assets(HTMLParser):
             self.inline_script = True
 
 
+# Pages that add their own static script after the base two (progressive enhancement only).
+PAGE_SCRIPTS = {"/settings": ["/static/settings.js"]}
+
+
 def _check_page(html: str, where: str) -> None:
     p = _Assets()
     p.feed(html)
-    assert p.scripts == ["/static/theme.js", "/static/htmx.min.js"], where
+    base = ["/static/theme.js", "/static/htmx.min.js"]
+    assert p.scripts == base + PAGE_SCRIPTS.get(where, []), where
     assert not p.inline_script, where
     assert p.style_elements == 0, where
     assert p.style_attrs == 0, where
@@ -88,6 +93,7 @@ def test_static_files_are_served_without_login(anon: TestClient) -> None:
         ("/static/icons.svg", "image/svg+xml"),
         ("/static/htmx.min.js", "javascript"),
         ("/static/theme.js", "javascript"),
+        ("/static/settings.js", "javascript"),
     ):
         r = anon.get(path)
         assert r.status_code == 200, path
@@ -257,3 +263,11 @@ def test_theme_js_is_plain_and_guards_storage() -> None:
     assert "localStorage" not in unguarded
     assert "DOMContentLoaded" in js
     assert "dataset.theme" in js
+
+
+def test_settings_js_is_plain_and_optional() -> None:
+    """The Models rows work without it: it only narrows lists and clears the text box."""
+    js = (STATIC_DIR / "settings.js").read_text()
+    assert '"use strict"' in js
+    for banned in ("eval(", "innerHTML", "new Function", "document.write", "fetch("):
+        assert banned not in js, banned

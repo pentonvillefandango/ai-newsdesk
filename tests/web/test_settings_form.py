@@ -161,3 +161,31 @@ def test_a_job_missing_from_the_form_is_left_as_it_is() -> None:
     assert form.values["writer_model"] == "unbiased/pareto-26.9"
     for key in ("writer_provider", "consolidator_provider", "consolidator_model"):
         assert key not in form.values
+
+
+@pytest.mark.parametrize("job", ["judge", "writer", "briefing", "consolidator"])
+def test_the_other_model_box_wins_when_filled(job: str) -> None:
+    form = parse(
+        {
+            **VALID,
+            f"{job}_provider": "openrouter",
+            f"{job}_model": "google/gemini-3.8-flash",
+            f"{job}_model_other": " unbiased/pareto-26.9 ",
+        }
+    )
+    assert form.ok, form.errors
+    assert form.values[f"{job}_model"] == "unbiased/pareto-26.9"
+    empty = parse(
+        {
+            **VALID,
+            f"{job}_provider": "openrouter",
+            f"{job}_model": "google/gemini-3.8-flash",
+            f"{job}_model_other": "  ",
+        }
+    )
+    assert empty.values[f"{job}_model"] == "google/gemini-3.8-flash"
+
+
+def test_a_typed_jev_model_is_checked_too() -> None:
+    form = parse({**VALID, "judge_provider": "typesafe", "judge_model_other": "jev-9"})
+    assert form.errors["judge_model"] == "Choose a model that the selected judge provider offers."

@@ -43,6 +43,7 @@ def test_every_post_needs_a_session(app: FastAPI, anon: TestClient) -> None:
 def test_every_post_needs_a_csrf_token(app: FastAPI, client: TestClient) -> None:
     posts = _paths(app, "POST")
     assert "/login" in posts and "/logout" in posts
+    assert {"/settings/models/test", "/settings/models/refresh"} <= set(posts)
     for path in posts:
         r = client.post(_concrete(path), data={"x": "1"}, follow_redirects=False)
         assert r.status_code == 403, path

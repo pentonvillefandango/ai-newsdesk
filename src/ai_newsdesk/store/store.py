@@ -37,6 +37,7 @@ from ai_newsdesk.models import (
     StoryRef,
     StorySource,
     StoryText,
+    TokenTotals,
     Trust,
     UnscoredItem,
     Usage,
@@ -1057,21 +1058,41 @@ class Store:
             "SELECT COUNT(*) AS n FROM items WHERE status = 'reviewed' AND fetched_at >= ?",
             (since,),
         )
-        by_purpose = {
-            str(r["purpose"]): float(r["usd"])
-            for r in await self._all(
-                "SELECT purpose, COALESCE(SUM(cost_usd), 0) AS usd FROM spend"
-                " WHERE at >= ? GROUP BY purpose",
-                (since,),
+        rows = await self._all(
+            "SELECT purpose, COALESCE(SUM(cost_usd), 0) AS usd,"
+            " SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,"
+            " SUM(cache_read_tokens) AS cache_read_tokens,"
+            " SUM(cache_write_tokens) AS cache_write_tokens"
+            " FROM spend WHERE at >= ? GROUP BY purpose",
+            (since,),
+        )
+        by_purpose = {str(r["purpose"]): r for r in rows}
+
+        def usd(purpose: str) -> float:
+            row = by_purpose.get(purpose)
+            return float(row["usd"]) if row is not None else 0.0
+
+        def tokens(purpose: str) -> TokenTotals:
+            row = by_purpose.get(purpose)
+            if row is None:
+                return TokenTotals()
+            return TokenTotals(
+                input_tokens=int(row["input_tokens"] or 0),
+                output_tokens=int(row["output_tokens"] or 0),
+                cache_read_tokens=int(row["cache_read_tokens"] or 0),
+                cache_write_tokens=int(row["cache_write_tokens"] or 0),
             )
-        }
+
         return UsageStats(
             days=days,
             runs=int(runs["n"]) if runs is not None else 0,
             items_reviewed=int(reviewed["n"]) if reviewed is not None else 0,
-            review_usd=by_purpose.get("review", 0.0),
-            write_usd=by_purpose.get("write", 0.0),
-            briefing_usd=by_purpose.get("briefing", 0.0),
+            review_usd=usd("review"),
+            write_usd=usd("write"),
+            briefing_usd=usd("briefing"),
+            review_tokens=tokens("review"),
+            write_tokens=tokens("write"),
+            briefing_tokens=tokens("briefing"),
         )
 
     # ---- runs ------------------------------------------------------------------------

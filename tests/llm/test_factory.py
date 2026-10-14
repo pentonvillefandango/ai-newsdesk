@@ -99,3 +99,23 @@ def test_the_pool_never_shows_keys() -> None:
     pool = SdkPool(KEYS)
     for text in (repr(pool), str(pool)):
         assert KEYS["openai"] not in text and KEYS["openrouter"] not in text
+
+
+async def test_a_pool_closes_the_sdk_clients_it_built() -> None:
+    pool = SdkPool(KEYS)
+    sdk = pool.openai_compatible("openrouter")
+    claude = pool.anthropic()
+    await pool.aclose()
+    assert sdk.is_closed()
+    assert claude.is_closed()
+
+
+async def test_a_pool_leaves_an_injected_http_client_open() -> None:
+    import httpx
+
+    http = httpx.AsyncClient()
+    pool = SdkPool(KEYS, http_client=http)
+    pool.openai_compatible("openai")
+    await pool.aclose()
+    assert not http.is_closed
+    await http.aclose()

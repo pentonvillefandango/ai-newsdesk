@@ -220,6 +220,15 @@ class SourceOverview(BaseModel):
     items_total: int = 0
 
 
+class TokenTotals(BaseModel):
+    """Summed token counts of some spend rows."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+
+
 class UsageStats(BaseModel):
     """The last few days of real activity, used for the Settings cost estimate."""
 
@@ -229,3 +238,7 @@ class UsageStats(BaseModel):
     review_usd: float
     write_usd: float
     briefing_usd: float
+    # Tokens by purpose, so the estimate can price them with each job's chosen model.
+    review_tokens: TokenTotals = Field(default_factory=TokenTotals)
+    write_tokens: TokenTotals = Field(default_factory=TokenTotals)
+    briefing_tokens: TokenTotals = Field(default_factory=TokenTotals)

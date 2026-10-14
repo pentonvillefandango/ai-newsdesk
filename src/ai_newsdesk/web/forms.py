@@ -20,6 +20,7 @@ from ai_newsdesk.llm.validate import (
 from ai_newsdesk.models import SourceConfig, SourceKind, Trust
 from ai_newsdesk.runtime_settings import RuntimeSettings
 from ai_newsdesk.web.estimate import RUNS_PER_DAY_OPTIONS
+from ai_newsdesk.web.model_choices import effective_model
 
 ConfigValue = str | int | float | bool | list[str]
 
@@ -155,8 +156,17 @@ def parse_settings_form(
     Each AI job's (provider, model) pair goes through validate_model_choice, and a provider
     that needs a key must have one (``keys``: the names that resolve). A job whose fields are
     not in the form keeps its saved values (``current``); a posted model without a posted
-    provider is checked against the saved provider.
+    provider is checked against the saved provider. A filled ``<job>_model_other`` box wins
+    over the ``<job>_model`` select.
     """
+    form = {
+        **form,
+        **{
+            f"{job}_model": effective_model(form, job)
+            for job in ("judge", *MODEL_JOBS)
+            if f"{job}_model_other" in form
+        },
+    }
     result = SettingsForm()
     values, errors = result.values, result.errors
 

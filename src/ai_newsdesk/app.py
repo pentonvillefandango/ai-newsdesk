@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 from fastapi import FastAPI, Request
@@ -27,6 +28,7 @@ from ai_newsdesk.llm.base import ModelClient
 from ai_newsdesk.llm.catalogue import CatalogueFetch, ModelCatalogue, http_fetcher
 from ai_newsdesk.llm.factory import SdkPool, UnusableModelError, make_client
 from ai_newsdesk.llm.prices import PriceBook
+from ai_newsdesk.llm.shortlist import Shortlist
 from ai_newsdesk.normalise import canonical_url
 from ai_newsdesk.pipeline import PipelineContext
 from ai_newsdesk.pricing import Pricing
@@ -202,7 +204,9 @@ def create_app(
     config_dir: Path = Path("config"),
     clock: Clock | None = None,
     catalogue_fetch: CatalogueFetch | None = None,
+    model_http_client: Any | None = None,
 ) -> FastAPI:
+    """`model_http_client` is for tests: the Test button's SDK clients send through it."""
     settings = settings if settings is not None else Settings()  # pyright: ignore[reportCallIssue]
     factory: CtxFactory = ctx_factory if ctx_factory is not None else build_context
     app_clock: Clock = clock if clock is not None else SystemClock()
@@ -245,6 +249,8 @@ def create_app(
             app.state.api_keys = api_keys
             app.state.catalogue = catalogue
             app.state.prices = prices
+            app.state.shortlist = Shortlist.load(config_dir / "models.yaml")
+            app.state.model_tests = {}  # job -> the last Test result, for the no-JS redirect
             app.state.deps = deps
             app.state.ctx = await factory(deps)
             app.state.key_testers = (
@@ -305,15 +311,46 @@ def create_app(
             await rebuild_context()
 
     async def refresh_model_list() -> bool:
-        """Refresh the list now (Settings' refresh button) and rebuild when a job uses it."""
+        """Refresh the list now (Settings' refresh button) and rebuild when a job uses it.
+        A failed rebuild is logged by class name only and the old context keeps working."""
         ok = await app.state.catalogue.refresh()
         if ok:
-            await rebuild_if_list_used()
+            try:
+                await rebuild_if_list_used()
+            except Exception as exc:
+                log.warning(
+                    "rebuilding the context after the model-list refresh failed (%s);"
+                    " kept the old one",
+                    type(exc).__name__,
+                )
         return ok
+
+    def model_client(provider: str, model: str) -> AbstractAsyncContextManager[ModelClient]:
+        """A one-off client for Settings' Test button, over fresh SDK clients closed after use.
+        Raises UnusableModelError (a message for the owner) when the choice cannot be used."""
+
+        @asynccontextmanager
+        async def client() -> AsyncIterator[ModelClient]:
+            deps: AppDeps = app.state.deps
+            keys = {name: await deps.api_keys.resolve_api_key(name) for name in MODEL_PROVIDERS}
+            sdks = SdkPool(keys, http_client=model_http_client)
+            try:
+                yield make_client(
+                    provider,
+                    model,
+                    sdks=sdks,
+                    pricebook=deps.prices,
+                    catalogue=deps.catalogue.current,
+                )
+            finally:
+                await sdks.aclose()
+
+        return client()
 
     app.state.settings = settings
     app.state.rebuild_context = rebuild_context
     app.state.refresh_model_list = refresh_model_list
+    app.state.model_client = model_client
     install_security(app, settings)
     app.include_router(build_router())
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

@@ -1674,6 +1674,115 @@ select:focus-visible {
   text-align: right;
 }
 
+/* Models: one fieldset per AI job. */
+.model-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.notice--warn {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+
+.model-row {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  margin: 0;
+  padding: 0 0 var(--space-5);
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  scroll-margin-top: var(--space-5);
+}
+
+.model-row:last-of-type {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.model-row legend {
+  float: left; /* keeps the legend inside the grid instead of on the border */
+  width: 100%;
+  padding: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-1);
+  font-weight: 600;
+}
+
+.model-row__fields {
+  display: grid;
+  gap: var(--space-4);
+}
+
+@media (min-width: 40rem) {
+  .model-row__fields {
+    grid-template-columns: minmax(9rem, 12rem) minmax(0, 1fr);
+  }
+
+  .model-row__fields > .field:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+.model-row__fields select,
+.model-row__fields input {
+  max-width: none;
+}
+
+.model-row__fields > .field:last-child input {
+  max-width: 30rem;
+}
+
+.model-row__test {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2) var(--space-3);
+}
+
+.model-row__result {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.model-row__result:empty {
+  display: none;
+}
+
+.model-test {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-left: var(--gauge-w) solid var(--rule-strong);
+  font-size: var(--step--1);
+}
+
+.model-test--ok {
+  border-left-color: var(--ok);
+}
+
+.model-test--fail {
+  border-left-color: var(--danger);
+}
+
+.model-test--ok strong {
+  color: var(--ok);
+}
+
+.model-test--fail strong {
+  color: var(--danger);
+}
+
+.model-test__meta {
+  flex-basis: 100%;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
 .key {
   display: grid;
   gap: var(--space-2);
