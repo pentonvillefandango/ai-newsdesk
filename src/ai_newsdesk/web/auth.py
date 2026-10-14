@@ -72,7 +72,9 @@ class SessionCodec:
 
 
 class LoginRateLimiter:
-    """At most ``max_failures`` failed logins per client in a sliding ``window_s``.
+    """At most ``max_failures`` failed logins per key in a sliding ``window_s``.
+
+    The login route uses one key for every client (a global limit: single owner).
 
     Memory is bounded by ``max_clients`` (the least recently failing client is dropped first).
     """

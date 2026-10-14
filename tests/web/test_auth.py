@@ -288,3 +288,29 @@ async def test_password_verifies_are_bounded(
             *[c.post("/login", data={"password": "x", "csrf_token": token}) for _ in range(10)]
         )
     assert state["max"] == 2
+
+
+def test_login_limiter_is_global_across_client_addresses(tmp_path: Path) -> None:
+    """Single owner: one bucket for every client, so changing address (or faking
+    X-Forwarded-For) never earns more guesses."""
+    app = _app(make_settings(tmp_path))
+    with (
+        TestClient(app, base_url=BASE_URL, client=("192.0.2.10", 5000)) as a,
+        TestClient(app, base_url=BASE_URL, client=("192.0.2.20", 5000)) as b,
+    ):
+        token_a = csrf_token(a)
+        for n in range(5):
+            r = a.post(
+                "/login",
+                data={"password": "nope", "csrf_token": token_a},
+                headers={"X-Forwarded-For": f"198.51.100.{n}"},
+                follow_redirects=False,
+            )
+            assert r.status_code == 401
+        r = b.post(
+            "/login",
+            data={"password": TEST_PASSWORD, "csrf_token": csrf_token(b)},
+            follow_redirects=False,
+        )
+    assert r.status_code == 429
+    assert "Too many wrong passwords" in r.text
