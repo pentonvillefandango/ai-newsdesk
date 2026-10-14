@@ -163,6 +163,7 @@ class Story(BaseModel):  # what the web layer renders
     feedback: int  # -1, 0, 1
     sources: list["StorySource"] = Field(default_factory=list)
     scored: bool = True  # False when no item in the story has a verdict yet ("Unscored")
+    dismissed: bool = False  # the owner hid it from Today (feedback-1 dismiss)
 
 
 class StorySource(BaseModel):
@@ -203,6 +204,7 @@ class XPost(BaseModel):
     signal: int | None = None
     status: ItemStatus
     junk: bool | None = None  # None: not judged yet
+    dismissed: bool = False  # the owner hid it from the X page (feedback-1 dismiss)
 
 
 class SourceOverview(BaseModel):
