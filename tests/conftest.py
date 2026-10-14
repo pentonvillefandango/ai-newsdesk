@@ -1,11 +1,14 @@
 """Shared pytest fixtures."""
 
 from collections.abc import Callable, Iterator
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
+from ai_newsdesk.clock import FixedClock
 from ai_newsdesk.config import Settings, get_settings
+from tests.fakes import utc
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -13,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # 32-character minimum.
 TEST_SECRETS_KEY = "test-secrets-key-" + "0" * 32
 TEST_SESSION_SECRET = "test-session-secret-" + "1" * 32
+TEST_NOW = utc(2026, 10, 14, 12, 0)
 
 
 @pytest.fixture
@@ -42,3 +46,19 @@ def settings_factory(clean_env: pytest.MonkeyPatch) -> Callable[..., Settings]:
         return Settings()  # type: ignore[call-arg]
 
     return make
+
+
+@pytest.fixture
+def db_path(tmp_path: Path) -> str:
+    """A fresh SQLite path in pytest's tmp dir (the file does not exist yet)."""
+    return str(tmp_path / "data" / "test.sqlite")
+
+
+@pytest.fixture
+def now() -> datetime:
+    return TEST_NOW
+
+
+@pytest.fixture
+def clock() -> FixedClock:
+    return FixedClock(TEST_NOW)
