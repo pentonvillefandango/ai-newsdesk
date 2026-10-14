@@ -204,3 +204,48 @@ def test_unknown_source_is_404(client: TestClient) -> None:
     assert client.get("/sources/999999/row", headers=HX).status_code == 404
     assert client.post("/sources/999999/mute", headers=_hx(client)).status_code == 404
     assert client.post("/sources/999999/delete", headers=_hx(client)).status_code == 404
+
+
+def test_rename_to_an_existing_name_is_422_and_changes_nothing(
+    app: FastAPI, client: TestClient
+) -> None:
+    store = app.state.store
+    first = run(client, seed.add_source, store, name="First")
+    second = run(client, seed.add_source, store, name="Second")
+    for headers, data in (
+        (_hx(client), {"name": "Second", "trust": "discovery", "value": "https://x.example/f"}),
+        (None, _form(client, name="Second", trust="discovery", value="https://x.example/f")),
+    ):
+        r = client.post(f"/sources/{first}", data=data, headers=headers)
+        assert r.status_code == 422
+        assert "already exists" in r.text
+        assert (headers is None) == ("<html" in r.text)
+    a = run(client, store.get_source, first)
+    b = run(client, store.get_source, second)
+    assert a is not None and b is not None
+    assert (a.name, a.trust) == ("First", Trust.PRIMARY)
+    assert a.config == {"url": "https://first.example/feed.xml"}
+    assert (b.name, b.config) == ("Second", {"url": "https://second.example/feed.xml"})
+    same = client.post(
+        f"/sources/{first}",
+        data={"name": "First", "trust": "trusted", "value": "https://first.example/f2"},
+        headers=_hx(client),
+    )
+    assert same.status_code == 200
+
+
+def test_add_duplicate_is_422_and_keeps_the_original(app: FastAPI, client: TestClient) -> None:
+    store = app.state.store
+    orig = run(client, seed.add_source, store, name="Dup", trust=Trust.PRIMARY, enabled=False)
+    r = client.post(
+        "/sources",
+        data=_form(
+            client, kind="feed", name="Dup", trust="discovery", value="https://other.example/f"
+        ),
+    )
+    assert r.status_code == 422
+    assert "A feed source called Dup already exists" in r.text
+    stored = run(client, store.get_source, orig)
+    assert stored is not None
+    assert stored.config == {"url": "https://dup.example/feed.xml"}
+    assert (stored.trust, stored.enabled) == (Trust.PRIMARY, False)

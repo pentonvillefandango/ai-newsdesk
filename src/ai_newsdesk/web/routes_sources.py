@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -53,6 +54,15 @@ async def _row(request: Request, source_id: int) -> SourceOverview:
         if row.source.id == source_id:
             return row
     raise HTTPException(status_code=404, detail="There is no such source.")
+
+
+def _taken(kind: SourceKind, name: str) -> str:
+    return f"A {kind.value} source called {name} already exists."
+
+
+async def _name_taken(request: Request, kind: SourceKind, name: str, exclude: int | None) -> bool:
+    sources = await store_of(request).list_sources(enabled_only=False)
+    return any(s.kind == kind and s.name == name and s.id != exclude for s in sources)
 
 
 async def _source(request: Request, source_id: int) -> SourceConfig:
@@ -134,7 +144,17 @@ async def add_source(
     if not form.ok or form.kind is None or form.trust is None:
         submitted = {"kind": kind, "name": name, "trust": trust, "value": value}
         return await _page(request, add=submitted, add_errors=form.errors, status_code=422)
-    source_id = await store_of(request).upsert_source(form.kind, form.name, form.config, form.trust)
+    submitted = {"kind": kind, "name": name, "trust": trust, "value": value}
+    if await _name_taken(request, form.kind, form.name, None):
+        errors = {"name": _taken(form.kind, form.name)}
+        return await _page(request, add=submitted, add_errors=errors, status_code=422)
+    try:
+        source_id = await store_of(request).upsert_source(
+            form.kind, form.name, form.config, form.trust
+        )
+    except sqlite3.IntegrityError:
+        errors = {"name": _taken(form.kind, form.name)}
+        return await _page(request, add=submitted, add_errors=errors, status_code=422)
     return RedirectResponse(f"/sources?added={source_id}#source-{source_id}", status_code=303)
 
 
@@ -176,15 +196,28 @@ async def edit_source(
             edit_errors=form.errors,
             status_code=422,
         )
-    # weight is left out (None), so step 1 keeps the weight learned from thumbs.
-    await store_of(request).upsert_source(
-        existing.kind,
-        form.name,
-        form.config,
-        form.trust,
-        enabled=existing.enabled,
-        source_id=source_id,
-    )
+    submitted = {"name": name, "trust": trust, "value": value}
+    taken = await _name_taken(request, existing.kind, form.name, source_id)
+    if not taken:
+        try:
+            # weight is left out (None), so step 1 keeps the weight learned from thumbs.
+            await store_of(request).upsert_source(
+                existing.kind,
+                form.name,
+                form.config,
+                form.trust,
+                enabled=existing.enabled,
+                source_id=source_id,
+            )
+        except sqlite3.IntegrityError:
+            taken = True
+    if taken:
+        errors = {"name": _taken(existing.kind, form.name)}
+        if is_htmx(request):
+            return _edit_partial(request, await _row(request, source_id), submitted, errors, 422)
+        return await _page(
+            request, editing=source_id, edit_form=submitted, edit_errors=errors, status_code=422
+        )
     if is_htmx(request):
         return _row_partial(request, await _row(request, source_id))
     return RedirectResponse(f"/sources#source-{source_id}", status_code=303)
