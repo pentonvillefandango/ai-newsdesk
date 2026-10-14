@@ -49,7 +49,9 @@ CAP_DEFAULT, CAP_MIN, CAP_MAX = 0.25, 0.01, 5.0
 # The run holds the pipeline lock, which a scheduled run waits up to 20 min for: bound it.
 CALL_TIMEOUT_S = 120
 RUN_TIMEOUT_S = 15 * 60
-MAX_RETRIES = 1  # per call, for the comparison's SDK clients
+# No SDK retries: a retried request may be billed twice, and the guard counts one worst case
+# per call. A failed call just fails its batch.
+MAX_RETRIES = 0
 TOO_LONG = "The comparison took longer than 15 minutes, so it was stopped."
 INTERRUPTED = "The app restarted during the comparison."
 
@@ -229,11 +231,13 @@ async def run_comparison(
     client_for: ClientFor,
     budget: Budget,
     clock: Clock,
-    call_timeout_s: float = CALL_TIMEOUT_S,
-    run_timeout_s: float = RUN_TIMEOUT_S,
+    call_timeout_s: float | None = None,
+    run_timeout_s: float | None = None,
 ) -> CompareStatus:
     """Runs the comparison and always finishes its row: `done`, `capped` (a model stopped at a
     cap) or `failed` (unusable model, time limit or an unexpected error)."""
+    call_timeout_s = CALL_TIMEOUT_S if call_timeout_s is None else call_timeout_s
+    run_timeout_s = RUN_TIMEOUT_S if run_timeout_s is None else run_timeout_s
     guard = CompareGuard(budget, cap_usd)
     status: CompareStatus = "done"
     error: str | None = None
@@ -415,13 +419,17 @@ def judge_items(
 
 def best_judge(rows: Sequence[JudgeSummary]) -> str | None:
     """Highest accuracy against the labels; without labels, highest agreement with the
-    production judge; else none. A tie at the top names no model."""
+    production judge. Models tied on accuracy are separated by their production agreement;
+    a tie that remains names no model."""
+    candidates = list(rows)
     for rate in (lambda r: r.accuracy, lambda r: r.agree_production):
-        scored = [(value, r.key) for r in rows if (value := rate(r)) is not None]
-        if scored:
-            best = max(value for value, _ in scored)
-            top = [key for value, key in scored if value == best]
-            return top[0] if len(top) == 1 else None
+        scored = [(value, r) for r in candidates if (value := rate(r)) is not None]
+        if not scored:
+            continue
+        best = max(value for value, _ in scored)
+        candidates = [r for value, r in scored if value == best]
+        if len(candidates) == 1:
+            return candidates[0].key
     return None
 
 

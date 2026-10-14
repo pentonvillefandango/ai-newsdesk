@@ -28,6 +28,7 @@ from ai_newsdesk.runtime_settings import (
 )
 from ai_newsdesk.store import Store
 from ai_newsdesk.store.records import CompareModel, CompareResult
+from ai_newsdesk.web import routes_compare
 from ai_newsdesk.web.model_choices import JUDGE_WARNING
 from tests.fake_openai import completion
 from tests.web import seed
@@ -63,9 +64,12 @@ class Provider:
     def __init__(self) -> None:
         self.requests: list[httpx.Request] = []
         self.summary = "A plain summary."
+        self.hang = False  # accept the request and never answer
 
-    def handle(self, request: httpx.Request) -> httpx.Response:
+    async def handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
+        if self.hang:
+            await asyncio.sleep(3600)
         user = json.loads(request.content)["messages"][-1]["content"]
         items = [int(i) for i in re.findall(r'<item id="(\d+)">', user)]
         stories = [int(i) for i in re.findall(r'<story id="(\d+)">', user)]
@@ -350,15 +354,44 @@ def test_a_run_starts_in_the_background_and_changes_no_production_data(
     assert "Lab item number 0" in page
 
 
-def test_a_comparison_uses_one_retry_at_most(capp: FastAPI, cclient: TestClient) -> None:
+def test_comparison_clients_never_retry(capp: FastAPI, cclient: TestClient, tmp_path: Path) -> None:
+    """A retried request could be billed twice while the guard counts one worst case."""
     _save_keys(cclient)
 
-    async def retries() -> int:
-        async with capp.state.compare_clients() as client_for:
-            client = client_for("openrouter", "google/gemini-3.8-flash")
-            return client._client.max_retries  # type: ignore[attr-defined]
+    async def retries(app: FastAPI, models: list[CompareModel]) -> list[int]:
+        async with app.state.compare_clients() as client_for:
+            clients = [client_for(m.provider, m.model) for m in models]
+            return [c._client.max_retries for c in clients]  # type: ignore[attr-defined]
 
-    assert run(cclient, retries) <= 1
+    assert compare.MAX_RETRIES == 0
+    assert run(cclient, retries, capp, [GEMINI, NANO]) == [0, 0]
+    # The Anthropic SDK can't take the test transport: an app without one builds it.
+    plain = create_app(
+        make_settings(tmp_path / "plain"),
+        ctx_factory=fake_ctx_factory,
+        config_dir=CONFIG_DIR,
+        clock=FixedClock(NOW),
+        catalogue_fetch=fixture_catalogue,
+    )
+    with TestClient(plain, base_url=BASE_URL) as c:
+        assert run(c, retries, plain, [HAIKU]) == [0]
+
+
+def test_a_failed_run_releases_the_lock(
+    capp: FastAPI, cclient: TestClient, provider: Provider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _save_keys(cclient)
+    run(cclient, _items, _store(capp), 3)
+    provider.hang = True
+    monkeypatch.setattr(compare, "RUN_TIMEOUT_S", 0.2)
+    r = _post(cclient, "/compare/run", {"job": "judge", **TWO_MODELS})
+    assert r.status_code == 303
+    run_id = int(r.headers["location"].rsplit("/", 1)[1])
+    run(cclient, _drain, capp)
+    record = run(cclient, _store(capp).compare_run, run_id)
+    assert record is not None
+    assert (record.status, record.error) == ("failed", compare.TOO_LONG)
+    assert not capp.state.run_lock.locked()
 
 
 def test_busy_when_the_pipeline_lock_is_held(
@@ -595,6 +628,23 @@ def test_use_this_model_for_the_writer(capp: FastAPI, cclient: TestClient) -> No
     saved = run(cclient, load_runtime_settings, _store(capp))
     assert (saved.writer_provider, saved.writer_model) == ("openai", "gpt-5.4-nano")
     assert (saved.judge_provider, saved.judge_model) == ("anthropic", "claude-haiku-5-5")
+
+
+def test_use_this_model_refuses_a_value_the_settings_reject(
+    capp: FastAPI, cclient: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _save_keys(cclient)
+    run_id, _ = _judge_run(capp, cclient)
+
+    async def refuse(store: Store, **fields: Any) -> None:
+        RuntimeSettings(judge_model="")  # raises ValidationError, as a refused save does
+
+    monkeypatch.setattr(routes_compare, "update_runtime_settings", refuse)
+    before = capp.state.ctx
+    r = _post(cclient, f"/compare/runs/{run_id}/use", {"model_key": GEMINI.key})
+    assert r.status_code == 422
+    assert "This value was refused." in r.text
+    assert capp.state.ctx is before
 
 
 def test_use_this_model_is_validated_like_settings(capp: FastAPI, cclient: TestClient) -> None:

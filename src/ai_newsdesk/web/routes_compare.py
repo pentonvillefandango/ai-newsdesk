@@ -13,6 +13,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from pydantic import ValidationError
 
 from ai_newsdesk import compare
 from ai_newsdesk.budget import Budget
@@ -503,7 +504,10 @@ async def use_model(request: Request, run_id: int, model_key: Annotated[str, For
         if run.job == "judge"
         else {"writer_provider": model.provider, "writer_model": model.model}
     )
-    await update_runtime_settings(store_of(request), **fields)
+    try:
+        await update_runtime_settings(store_of(request), **fields)
+    except ValidationError:  # as Settings: nothing is saved
+        return await _render_run(request, run, use_error="This value was refused.", status_code=422)
     await app.state.rebuild_context()
     log.info("comparison %d: %s now uses %s", run_id, run.job, model.key)
     return RedirectResponse(f"/compare/runs/{run_id}?used=1", status_code=303, headers=NO_STORE)

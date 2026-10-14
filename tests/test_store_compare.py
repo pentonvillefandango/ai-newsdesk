@@ -73,6 +73,12 @@ async def test_a_run_is_created_finished_and_listed_newest_first(store: Store) -
     assert (run.status, run.cost_usd) == ("capped", 0.2)
     assert run.finished_at == NOW + timedelta(minutes=1)
 
+    # A finished run stays as it was: a late fallback can't overwrite its status or cost.
+    await store.finish_compare_run(first, "failed", NOW + timedelta(minutes=2), 0.0, "late")
+    run = await store.compare_run(first)
+    assert run is not None
+    assert (run.status, run.cost_usd, run.error) == ("capped", 0.2, None)
+
     assert [r.id for r in await store.compare_runs()] == [third, second, first]
     assert [r.id for r in await store.compare_runs(limit=1)] == [third]
     assert await store.compare_run(999) is None

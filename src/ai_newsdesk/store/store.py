@@ -1467,10 +1467,11 @@ class Store:
         cost_usd: float,
         error: str | None,
     ) -> None:
+        """Finish a running comparison; one already finished is left as it is."""
         async with self._tx() as conn:
             await conn.execute(
                 "UPDATE compare_runs SET status = ?, finished_at = ?, cost_usd = ?, error = ?"
-                " WHERE id = ?",
+                " WHERE id = ? AND status = 'running'",
                 (status, _ts(at), cost_usd, error, run_id),
             )
 

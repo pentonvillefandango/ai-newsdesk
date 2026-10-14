@@ -537,6 +537,34 @@ def test_the_best_judge_is_by_label_accuracy_then_production_agreement() -> None
     assert compare.best_judge(compare.judge_summary([A, B], bare, RESULTS, 4)) is None
 
 
+def test_a_tie_on_accuracy_is_broken_by_production_agreement_among_the_tied() -> None:
+    [base] = compare.judge_summary([A], ITEMS, RESULTS, threshold=4)
+
+    def row(key: str, accuracy: float, agree: float | None) -> compare.JudgeSummary:
+        return dataclasses.replace(base, key=key, accuracy=accuracy, agree_production=agree)
+
+    a, b = row("a", 0.8, 0.7), row("b", 0.8, 0.9)
+    c = row("c", 0.5, 1.0)  # best production agreement, but not tied at the top
+    assert compare.best_judge([a, b, c]) == "b"
+    assert compare.best_judge([a, row("b", 0.8, 0.7), c]) is None  # still tied
+    assert compare.best_judge([row("a", 0.8, None), b]) == "b"
+
+
+async def test_a_timed_out_calls_worst_case_is_held_against_the_cap(store: Store) -> None:
+    await queued_items(store, 3)
+    sample = await compare.judge_sample(store, NOW, 3)
+    worst = LLMJudge(FakeModelClient()).worst_case_cost(sample)
+    a = HangingClient(provider="anthropic", model="claude-haiku-5-5")
+    b = FakeModelClient([])
+    # Room for both calls only if A's unanswered call were free.
+    _, _, status = await _judge_run(
+        store, {A.key: a, B.key: b}, [A, B], cap=worst * 1.5, n=3, call_timeout_s=0.05
+    )
+    assert status == "capped"
+    assert len(a.calls) == 1 and b.calls == []
+    assert await spend_rows(store) == []
+
+
 def test_writer_summary_tallies_preferences() -> None:
     def story(key: str, sid: int, ok: bool, ran: bool = True) -> CompareResult:
         text = StoryText(story_id=sid, summary="S.") if ok else None
