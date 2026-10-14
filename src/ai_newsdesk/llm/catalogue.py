@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from ai_newsdesk.pricing import CACHE_WRITE_MULTIPLIER
 from ai_newsdesk.protocols import Clock
 from ai_newsdesk.store.store import Store
 
@@ -26,6 +27,7 @@ OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 SETTING_KEY = "model_catalogue"
 STALE_AFTER = timedelta(hours=24)
 _PER_MTOK = 1_000_000
+REQUIRED_PARAMETERS = ("structured_outputs", "response_format", "max_tokens")
 
 CatalogueFetch = Callable[[], Awaitable[object]]
 
@@ -50,21 +52,22 @@ def _usd(value: object) -> float | None:
 
 
 def _highest(pricing: dict[str, Any], *keys: str) -> float | None:
-    """The highest price among `keys` in the base pricing and every tiered override.
+    """The highest price among `keys` in the base pricing and every tiered override, or None
+    unless the base `keys[0]` price is positive.
 
     Tiered prices (e.g. above 100k prompt tokens) cost more, and the worst case must cover them.
     """
-    tiers = [pricing, *[o for o in pricing.get("overrides") or [] if isinstance(o, dict)]]
     base = _usd(pricing.get(keys[0]))
     if base is None or base <= 0:
         return None
-    values = [base]
-    for tier in tiers:
-        for key in keys:
-            v = _usd(tier.get(key))
-            if v is not None:
-                values.append(v)
-    return max(values)
+    return max(base, _highest_any(pricing, *keys) or 0.0)
+
+
+def _highest_any(pricing: dict[str, Any], *keys: str) -> float | None:
+    """The highest positive price among `keys` in any tier, or None when none is listed."""
+    tiers = [pricing, *[o for o in pricing.get("overrides") or [] if isinstance(o, dict)]]
+    values = [v for t in tiers for k in keys if (v := _usd(t.get(k))) is not None and v > 0]
+    return max(values) if values else None
 
 
 def _entry(raw: object) -> CatalogueModel | None:
@@ -74,7 +77,9 @@ def _entry(raw: object) -> CatalogueModel | None:
     if not isinstance(model_id, str) or not model_id or model_id.endswith(":free"):
         return None
     params = raw.get("supported_parameters")
-    if not isinstance(params, list) or "structured_outputs" not in params:
+    # We always send response_format and max_tokens, and OpenRouter calls set
+    # require_parameters, so an endpoint must list all three.
+    if not isinstance(params, list) or not set(REQUIRED_PARAMETERS) <= set(params):
         return None
     arch = raw.get("architecture")
     inputs = arch.get("input_modalities") if isinstance(arch, dict) else None
@@ -87,6 +92,11 @@ def _entry(raw: object) -> CatalogueModel | None:
     completion = _highest(pricing, "completion", "internal_reasoning")
     if prompt is None or completion is None:
         return None
+    # The worst case prices input as a cache write at 1.25x the input price; raise the stored
+    # input price when a model's cache write costs more than that.
+    cache_write = _highest_any(pricing, "input_cache_write", "input_cache_write_1h")
+    if cache_write is not None:
+        prompt = max(prompt, cache_write / CACHE_WRITE_MULTIPLIER)
     name = raw.get("name")
     context = raw.get("context_length")
     return CatalogueModel(

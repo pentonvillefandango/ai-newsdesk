@@ -10,6 +10,7 @@ from ai_newsdesk.briefing import (
     clean_briefing,
     render_briefing_request,
 )
+from ai_newsdesk.claude_common import SCHEMA_OVERHEAD_TOKENS
 from ai_newsdesk.models import BriefingStory, Category, Purpose, WriteInput
 from ai_newsdesk.pricing import Pricing
 from ai_newsdesk.writer import WRITER_SYSTEM, BriefingDoc, HaikuWriter, StoryBatch, StoryWriting
@@ -142,7 +143,7 @@ def test_worst_case_stories_is_an_absolute_upper_bound() -> None:
     writer = HaikuWriter(as_client(FakeAnthropic([])), MODEL, PRICING)
     batch = [wi(1, texts=["é" * 500])]
     sent = WRITER_SYSTEM + '<story id="1">' + "é" * 500  # a lower bound on what is sent
-    min_bytes = len(sent.encode("utf-8")) + 600
+    min_bytes = len(sent.encode("utf-8")) + SCHEMA_OVERHEAD_TOKENS
     floor = min_bytes * 0.125 / 1e6 + 4000 * 0.50 / 1e6
     got = writer.worst_case_cost_stories(batch)
     assert got >= floor
@@ -161,7 +162,7 @@ def test_worst_case_briefing_is_an_absolute_upper_bound() -> None:
     )
     stories = [bs(1, "https://example.com/é")]
     sent = BRIEFING_SYSTEM + render_briefing_request(stories, "Wednesday 14 October 2026")
-    min_bytes = len(sent.encode("utf-8")) + 600
+    min_bytes = len(sent.encode("utf-8")) + SCHEMA_OVERHEAD_TOKENS
     floor = min_bytes * 2.50 / 1e6 + 4000 * 10.00 / 1e6
     got = writer.worst_case_cost_briefing(stories)
     assert got >= floor

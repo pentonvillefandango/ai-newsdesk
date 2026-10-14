@@ -67,6 +67,10 @@ def _strict(node: Any) -> Any:
         else:
             out[key] = _strict(value)
     if "properties" in out or out.get("type") == "object":
+        if "properties" not in out or not isinstance(out.get("additionalProperties", False), bool):
+            # A dict[str, X] field: strict mode cannot express it, and closing it would allow
+            # only {}. Fail loudly rather than send a schema that silently changes meaning.
+            raise ValueError("strict schemas cannot contain free-form objects (dict fields)")
         out["additionalProperties"] = False
         out["required"] = list(out.get("properties", {}))
     return out
@@ -131,7 +135,11 @@ class OpenAICompatibleClient:
         self, *, system: str, user: str, schema: type[T], max_tokens: int, purpose: Purpose
     ) -> StructuredResult[T]:
         extra_body: dict[str, Any] | None = None
-        if self.provider == "openrouter":
+        # The output cap, reasoning included. OpenAI direct takes max_completion_tokens; most
+        # OpenRouter endpoints list only max_tokens, and require_parameters would refuse to
+        # route a parameter an endpoint does not list.
+        openrouter = self.provider == "openrouter"
+        if openrouter:
             try:
                 price = self._prices.price(self.provider, self.model)
             except UnknownModelError:  # never route a call without a price ceiling
@@ -153,7 +161,6 @@ class OpenAICompatibleClient:
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                max_completion_tokens=max_tokens,
                 response_format={
                     "type": "json_schema",
                     "json_schema": {
@@ -162,6 +169,8 @@ class OpenAICompatibleClient:
                         "schema": strict_schema(schema),
                     },
                 },
+                max_tokens=max_tokens if openrouter else openai.omit,
+                max_completion_tokens=openai.omit if openrouter else max_tokens,
                 extra_body=extra_body,
             )
         except Exception as exc:  # never raises: the caller's items fail

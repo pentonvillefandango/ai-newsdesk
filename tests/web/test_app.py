@@ -220,10 +220,11 @@ def test_real_context_budget_prices_through_the_shared_price_book(tmp_path: Path
         assert app.state.ctx.budget.prices is app.state.prices
 
 
-async def test_nightly_jobs_run_taste_then_refresh_the_catalogue(
+async def test_nightly_jobs_refresh_the_catalogue_in_the_background(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     order: list[str] = []
+    release = asyncio.Event()
 
     async def fake_taste(ctx: object) -> None:
         order.append("taste")
@@ -231,11 +232,38 @@ async def test_nightly_jobs_run_taste_then_refresh_the_catalogue(
 
     class Cat:
         async def refresh(self) -> bool:
+            await release.wait()  # a slow fetch
             order.append("catalogue")
             return True
 
     monkeypatch.setattr("ai_newsdesk.app.taste.nightly", fake_taste)
-    job = nightly_jobs(Cat())  # type: ignore[arg-type]
+    background: set[asyncio.Task[None]] = set()
+    job = nightly_jobs(Cat(), background)  # type: ignore[arg-type]
     with pytest.raises(RuntimeError):
         await job(object())  # type: ignore[arg-type]
-    assert order == ["taste", "catalogue"]  # a failed taste refit never skips the refresh
+    # The job (which runs under the scheduler lock) returned without waiting for the fetch,
+    # and a failed taste refit never skips the refresh.
+    assert order == ["taste"]
+    assert len(background) == 1
+    release.set()
+    await asyncio.gather(*list(background))
+    assert order == ["taste", "catalogue"]
+    assert background == set()
+
+
+def test_startup_never_waits_for_the_catalogue_fetch(tmp_path: Path) -> None:
+    started: list[int] = []
+
+    async def hang() -> object:
+        started.append(1)
+        await asyncio.Event().wait()  # never set: only shutdown's cancel ends it
+        return {}
+
+    app = _app(tmp_path, hang)
+    with TestClient(app, base_url=BASE_URL) as c:
+        assert c.get("/health").status_code == 200
+        run(c, asyncio.sleep, 0.01)  # let the fetch start
+        assert app.state.catalogue.current is None
+        assert len(app.state.background) == 1
+    assert started == [1]
+    assert app.state.background == set()  # cancelled cleanly at shutdown

@@ -100,21 +100,32 @@ async def build_context(deps: AppDeps) -> PipelineContext:
     )
 
 
-def nightly_jobs(catalogue: ModelCatalogue) -> NightlyFn:
-    """The nightly chain: the taste refit, then the model catalogue refresh (which never
-    raises), even when the refit fails."""
+def refresh_in_background(
+    catalogue: ModelCatalogue, background: set[asyncio.Task[None]]
+) -> asyncio.Task[None]:
+    """Refresh the catalogue without blocking the caller (or holding the pipeline lock).
+    refresh() never raises: a failure is logged and the last good copy is kept."""
+
+    async def refresh() -> None:
+        await catalogue.refresh()
+
+    task = asyncio.create_task(refresh(), name="catalogue-refresh")
+    background.add(task)
+    task.add_done_callback(background.discard)
+    return task
+
+
+def nightly_jobs(catalogue: ModelCatalogue, background: set[asyncio.Task[None]]) -> NightlyFn:
+    """The nightly chain: the taste refit, then a background catalogue refresh, even when the
+    refit fails. The fetch runs outside the scheduler lock, so it never delays a run."""
 
     async def run(ctx: PipelineContext) -> None:
         try:
             await taste.nightly(ctx)
         finally:
-            await catalogue.refresh()
+            refresh_in_background(catalogue, background)
 
     return run
-
-
-async def _refresh(catalogue: ModelCatalogue) -> None:
-    await catalogue.refresh()
 
 
 async def _http_error(request: Request, exc: Exception) -> Response:
@@ -185,11 +196,8 @@ def create_app(
             )
             # Always built, so Refresh now can use run_now() even with the schedule switched off.
             if catalogue.is_stale():
-                # Never blocks start-up; refresh() logs and keeps the last good copy on failure.
-                task = asyncio.create_task(_refresh(catalogue), name="catalogue-refresh")
-                background.add(task)
-                task.add_done_callback(background.discard)
-            scheduler = Scheduler(app.state.ctx, nightly_fn=nightly_jobs(catalogue))
+                refresh_in_background(catalogue, background)  # never blocks start-up
+            scheduler = Scheduler(app.state.ctx, nightly_fn=nightly_jobs(catalogue, background))
             if settings.scheduler_enabled:
                 scheduler.start()
             app.state.scheduler = scheduler

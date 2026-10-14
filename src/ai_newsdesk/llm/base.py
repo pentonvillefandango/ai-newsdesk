@@ -12,8 +12,9 @@ from pydantic import BaseModel
 
 from ai_newsdesk.models import Purpose, Usage
 
-# Structured output adds a schema-derived preamble to the input; count it generously.
-SCHEMA_OVERHEAD_TOKENS = 600
+# Structured output adds a schema-derived preamble to the input. Bytes bound tokens, so this
+# covers any production schema whose strict JSON is at most this many bytes (tested).
+SCHEMA_OVERHEAD_TOKENS = 1500
 
 
 def estimate_tokens(text: str) -> int:

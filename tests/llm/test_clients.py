@@ -10,6 +10,8 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
+from ai_newsdesk.budget import Budget
+from ai_newsdesk.clock import FixedClock
 from ai_newsdesk.consolidate import StoryGroups
 from ai_newsdesk.judges.haiku import BatchJudgement
 from ai_newsdesk.llm import (
@@ -25,8 +27,10 @@ from ai_newsdesk.llm.openai_client import strict_schema
 from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.models import Purpose
 from ai_newsdesk.pricing import Pricing
+from ai_newsdesk.runtime_settings import RuntimeSettings
+from ai_newsdesk.store.store import Store
 from ai_newsdesk.writer import BriefingDoc, StoryBatch
-from tests.conftest import ROOT
+from tests.conftest import ROOT, TEST_NOW
 from tests.fake_anthropic import FakeAnthropic, as_client, connection_error, reply, server_error
 from tests.fake_openai import FAKE_KEY, FakeOpenAI, completion
 
@@ -177,8 +181,15 @@ async def test_openai_common_request_body(provider: str, model: str) -> None:
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content": USER},
     ]
-    assert body["max_completion_tokens"] == 321
-    assert "max_tokens" not in body
+    # OpenAI direct bounds reasoning with max_completion_tokens; most OpenRouter endpoints list
+    # only max_tokens, and require_parameters would refuse anything they do not list.
+    cap, other = (
+        ("max_completion_tokens", "max_tokens")
+        if provider == "openai"
+        else ("max_tokens", "max_completion_tokens")
+    )
+    assert body[cap] == 321
+    assert other not in body
     assert "temperature" not in body
     assert body["response_format"] == {
         "type": "json_schema",
@@ -319,18 +330,74 @@ def test_worst_case_covers_an_actual_call(provider: str, model: str) -> None:
     )
 
 
-@pytest.mark.parametrize(("provider", "model"), PROVIDER_MODELS)
-async def test_worst_case_is_at_least_the_recorded_cost(provider: str, model: str) -> None:
-    # A tokeniser never yields more tokens than UTF-8 bytes; output is capped at max_tokens.
+WORST_CASES = [
+    (provider, model, kind)
+    for provider, model in [("anthropic", "claude-haiku-5-5"), *PROVIDER_MODELS]
+    for kind in ("cache_write", "cache_read")
+] + [("openrouter", "google/gemini-3.8-flash", "reported")]
+
+
+@pytest.mark.parametrize(("provider", "model", "kind"), WORST_CASES)
+async def test_worst_case_is_at_least_the_recorded_cost(
+    store: Store, provider: str, model: str, kind: str
+) -> None:
+    # A tokeniser never yields more tokens than UTF-8 bytes, the schema fits the overhead, and
+    # output is capped at max_tokens: so the whole prompt is at most `prompt` tokens.
     prompt = estimate_tokens(SYSTEM + USER) + SCHEMA_OVERHEAD_TOKENS
-    fake = FakeOpenAI(
-        [completion('{"ok": true, "note": null}', prompt_tokens=prompt, completion_tokens=500)]
-    )
-    client = openai_client(fake, provider, model)
-    result = await call(client, max_tokens=500)
+    out = 500
+    price = PRICES.price(provider, model)
+    client: ModelClient
+    if provider == "anthropic":
+        write, read = (prompt, 0) if kind == "cache_write" else (0, prompt)
+        fake = FakeAnthropic(
+            [reply(Answer(ok=True, note=None), input_tokens=0, output_tokens=out,
+                   cache_write=write, cache_read=read)]
+        )  # fmt: skip
+        client = anthropic_client(fake)
+    else:
+        cost = None
+        if kind == "reported":  # the most max_price routing lets OpenRouter charge
+            cost = (prompt * price.input_per_mtok + out * price.output_per_mtok) / 1_000_000
+        fake_oa = FakeOpenAI(
+            [
+                completion(
+                    '{"ok": true, "note": null}',
+                    prompt_tokens=prompt,
+                    completion_tokens=out,
+                    cached=prompt if kind == "cache_read" else 0,
+                    cache_write=prompt if kind == "cache_write" else None,
+                    cost=cost,
+                )
+            ]
+        )
+        client = openai_client(fake_oa, provider, model)
+    result = await call(client, max_tokens=out)
     assert result.usage is not None
-    actual = PRICES.usage_cost(result.usage)
-    assert actual <= client.worst_case_usd(system=SYSTEM, user=USER, max_tokens=500)
+    if kind == "reported":
+        assert result.usage.reported_cost_usd is not None
+    budget = Budget(store, PRICING, FixedClock(TEST_NOW), RuntimeSettings(), prices=PRICES)
+    worst = client.worst_case_usd(system=SYSTEM, user=USER, max_tokens=out)
+    assert budget.cost(result.usage) <= worst * (1 + 1e-9)
+
+
+@pytest.mark.parametrize("model", [BatchJudgement, StoryBatch, BriefingDoc, StoryGroups])
+def test_production_schemas_fit_the_schema_overhead(model: type[BaseModel]) -> None:
+    for schema in (strict_schema(model), model.model_json_schema()):
+        assert len(json.dumps(schema).encode("utf-8")) <= SCHEMA_OVERHEAD_TOKENS
+
+
+class WithMap(BaseModel):
+    counts: dict[str, int]
+
+
+class Untyped(BaseModel):
+    blob: dict  # type: ignore[type-arg]
+
+
+@pytest.mark.parametrize("model", [WithMap, Untyped])
+def test_strict_schema_refuses_free_form_objects(model: type[BaseModel]) -> None:
+    with pytest.raises(ValueError, match="free-form"):
+        strict_schema(model)
 
 
 def test_unsupported_provider_is_rejected() -> None:

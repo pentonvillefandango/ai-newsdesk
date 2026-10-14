@@ -22,7 +22,12 @@ from ai_newsdesk.store.store import Store
 from tests.conftest import ROOT
 
 FIXTURE = json.loads((ROOT / "tests" / "fixtures" / "openrouter" / "models.json").read_text())
-KEPT = ["anthropic/claude-haiku-5.5", "google/gemini-3.8-flash", "openai/gpt-5.4-nano"]
+KEPT = [
+    "anthropic/claude-haiku-5.5",
+    "example/costly-cache-write",
+    "google/gemini-3.8-flash",
+    "openai/gpt-5.4-nano",
+]
 
 
 def fetcher(*replies: object) -> Any:
@@ -52,6 +57,8 @@ def test_filter_keeps_only_priced_structured_text_models() -> None:
         ("example/free-completion", "zero completion price"),
         ("example/no-price", "non-numeric price"),
         ("example/missing-pricing", "no pricing at all"),
+        ("example/no-response-format", "response_format not supported"),
+        ("example/no-max-tokens", "max_tokens not supported"),
     ],
 )
 def test_each_filter_rule_rejects(model_id: str, rule: str) -> None:
@@ -67,6 +74,21 @@ def test_prices_are_per_million_tokens_and_take_the_highest_tier() -> None:
     # Above 100k prompt tokens the price rises; the worst case must use the higher tier.
     haiku = models["anthropic/claude-haiku-5.5"]
     assert (haiku.input_per_mtok, haiku.output_per_mtok) == pytest.approx((0.5, 2.5))
+
+
+def test_a_cache_write_above_125_percent_raises_the_input_price() -> None:
+    # The worst case prices input at 1.25x as a cache write; a 2x cache write must still fit.
+    model = {m.id: m for m in filter_models(FIXTURE)}["example/costly-cache-write"]
+    assert model.input_per_mtok == pytest.approx(2.0 / 1.25)
+    assert model.output_per_mtok == pytest.approx(2.0)
+    # A cache write within 1.25x leaves the input price alone.
+    entry = {**next(m for m in FIXTURE["data"] if m["id"] == "example/costly-cache-write")}
+    entry["pricing"] = {
+        "prompt": "0.000001",
+        "completion": "0.000002",
+        "input_cache_write": "0.00000125",
+    }
+    assert filter_models({"data": [entry]})[0].input_per_mtok == pytest.approx(1.0)
 
 
 @pytest.mark.parametrize("payload", [None, [], {"data": "nope"}, {"nodata": []}, "text"])
