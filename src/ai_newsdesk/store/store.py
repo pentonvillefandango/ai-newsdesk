@@ -8,6 +8,7 @@ stored as UTC ISO-8601 text with microseconds (`_ts`), so text order is time ord
 import asyncio
 import datetime as dt
 import json
+import logging
 from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
 from enum import Enum
@@ -42,6 +43,8 @@ from ai_newsdesk.models import (
 from ai_newsdesk.protocols import Clock
 from ai_newsdesk.store.db import apply_migrations, connect
 from ai_newsdesk.store.records import BriefingRecord, RunRecord, SourceStats
+
+log = logging.getLogger(__name__)
 
 NO_TEXT = "(no text, title only)"
 STORY_SOURCE_BONUS = 0.5  # added to a story's score per extra independent source
@@ -88,6 +91,11 @@ def _ts(at: dt.datetime) -> str:
     return at.astimezone(dt.UTC).isoformat(timespec="microseconds")
 
 
+def _require_aware(at: dt.datetime) -> None:
+    if at.tzinfo is None or at.utcoffset() is None:
+        raise ValueError("Store timestamps must be timezone-aware")
+
+
 def _dt(value: str | None) -> dt.datetime | None:
     return dt.datetime.fromisoformat(value) if value is not None else None
 
@@ -101,6 +109,7 @@ def _zone(tz: str | dt.tzinfo) -> dt.tzinfo:
 
 
 def _local_day_bounds(now: dt.datetime, tz: str | dt.tzinfo) -> tuple[dt.datetime, dt.datetime]:
+    _require_aware(now)
     zone = _zone(tz)
     day = now.astimezone(zone).date()
     start = dt.datetime(day.year, day.month, day.day, tzinfo=zone)
@@ -110,6 +119,7 @@ def _local_day_bounds(now: dt.datetime, tz: str | dt.tzinfo) -> tuple[dt.datetim
 
 
 def _local_month_bounds(now: dt.datetime, tz: str | dt.tzinfo) -> tuple[dt.datetime, dt.datetime]:
+    _require_aware(now)
     zone = _zone(tz)
     local = now.astimezone(zone)
     start = dt.datetime(local.year, local.month, 1, tzinfo=zone)
@@ -404,6 +414,12 @@ class Store:
             for c in candidates:
                 if c.source_id not in known:
                     continue
+                try:
+                    canonical = self.canonicalise(c.url)
+                    published = _ts(c.published_at) if c.published_at else None
+                except ValueError as exc:
+                    log.warning("skipping candidate from source %s: %s", c.source_id, exc)
+                    continue
                 cur = await conn.execute(
                     "INSERT INTO items (source_id, url, canonical_url, title, author,"
                     " published_at, fetched_at, snippet, hn_points)"
@@ -412,10 +428,10 @@ class Store:
                     (
                         c.source_id,
                         c.url,
-                        self.canonicalise(c.url),
+                        canonical,
                         c.title,
                         c.author,
-                        _ts(c.published_at) if c.published_at else None,
+                        published,
                         fetched_at,
                         c.snippet,
                         c.hn_points,

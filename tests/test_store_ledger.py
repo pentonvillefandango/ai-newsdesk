@@ -2,7 +2,7 @@
 
 import asyncio
 import sqlite3
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -150,3 +150,13 @@ async def test_backup_is_a_complete_copy(store: Store, tmp_path: Path) -> None:
     assert row == ('"present"',)
     with pytest.raises(FileExistsError):
         await store.backup(dest)
+
+
+async def test_naive_now_is_rejected_on_local_time_paths(store: Store) -> None:
+    naive = datetime(2026, 10, 1, 0, 30)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await store.month_spend(naive, LONDON)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await store.reviewed_count_today(naive, LONDON)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await store.spend_by_day(naive, LONDON)

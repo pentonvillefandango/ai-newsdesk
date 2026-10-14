@@ -1,6 +1,6 @@
 """Store: lifecycle, sources and items (Task 6, part 1)."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -241,3 +241,19 @@ async def test_save_verdict_and_reviewed_count(store: Store) -> None:
     assert await store.reviewed_count_today(NOW + timedelta(days=1), "Europe/London") == 0
     with pytest.raises(KeyError):
         await store.save_verdict(verdict.model_copy(update={"item_id": 999}), 1.0)
+
+
+async def test_bad_candidates_are_skipped_not_fatal(store: Store) -> None:
+    sid = await _source(store)
+    ids = await store.add_candidates(
+        [
+            make_candidate(sid, url="https://a.test/good1"),
+            make_candidate(sid, url="http://x.test:abc/p"),  # malformed port
+            make_candidate(sid, url="http://x.test:99999/"),  # port out of range
+            make_candidate(sid, url="https://a.test/naive", published_at=datetime(2026, 1, 1)),
+            make_candidate(sid, url="https://a.test/good2"),
+        ],
+        NOW,
+    )
+    assert len(ids) == 2
+    assert [t[0] for t in await store.recent_titles(24)] == ids
