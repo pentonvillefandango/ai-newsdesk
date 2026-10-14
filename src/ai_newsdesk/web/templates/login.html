@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Log in to Newsdesk{% endblock %}
+{% block masthead %}{% endblock %}
+{% block content %}
+<section class="login" aria-labelledby="login-title">
+  <div class="login__card">
+    <p class="wordmark wordmark--large">Newsdesk</p>
+    <h1 id="login-title" class="login__title">Log in</h1>
+    {% if not login_enabled %}
+    <div class="notice notice--error" role="alert">
+      <p>Login is switched off because no owner password is set. On the server, run <code>make set-password</code>, then restart the app.</p>
+    </div>
+    {% else %}
+    <form class="form" method="post" action="/login">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required autofocus{% if error %} aria-invalid="true" aria-describedby="login-error"{% endif %}>
+        {% if error %}<p class="field__error" id="login-error" role="alert">{{ error }}</p>{% endif %}
+      </div>
+      <div class="form__actions">
+        <button class="button" type="submit">Log in</button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
