@@ -40,7 +40,8 @@ BRIEFING_SYSTEM = (
     "- Use only facts from the supplied summaries.\n"
 )
 
-_LINK = re.compile(r"\[([^\]\n]+)\]\(([^)\s]+)\)")
+_LINK = re.compile(r"\[([^\[\]\n]+)\]\(([^)\s]+)\)")
+_MAX_PASSES = 10
 _EXTRA_BLANK_LINES = re.compile(r"\n{3,}")
 _TRAILING_SPACE = re.compile(r"[ \t]+\n")
 
@@ -74,9 +75,19 @@ def clean_briefing(body: str, allowed_urls: set[str]) -> str:
     link becomes its text). "## " headings and paragraphs pass through unchanged."""
 
     def keep(m: re.Match[str]) -> str:
-        return m.group(0) if m.group(2) in allowed_urls else m.group(1)
+        return (
+            m.group(0)
+            if m.group(2) in allowed_urls
+            else m.group(1).replace("[", "").replace("]", "")
+        )
 
     text = body.replace("\r\n", "\n").replace("\r", "\n")
     text = _TRAILING_SPACE.sub("\n", text)
     text = _EXTRA_BLANK_LINES.sub("\n\n", text)
-    return _LINK.sub(keep, text).strip()
+    # Stripping a link can expose a new "[text](url)" pair (nested brackets); repeat until stable.
+    for _ in range(_MAX_PASSES):
+        stripped = _LINK.sub(keep, text)
+        if stripped == text:
+            break
+        text = stripped
+    return text.strip()

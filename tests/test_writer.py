@@ -1,3 +1,4 @@
+import re
 from datetime import date
 from pathlib import Path
 
@@ -202,3 +203,30 @@ def test_briefing_story_payload_is_escaped() -> None:
     text = render_briefing_request([bs(1, "https://example.com/<a>")], "today")
     assert "<a>" not in text
     assert '<story id="1">' in text
+
+
+def _surviving_urls(text: str) -> set[str]:
+    return {m.group(2) for m in re.finditer(r"\[([^\]\n]*)\]\(([^)\s]+)\)", text)}
+
+
+def test_clean_briefing_nested_brackets_cannot_smuggle_a_link() -> None:
+    allowed = {"https://a.example/1"}
+    out = clean_briefing("[[t](https://x.example/1)](https://evil.example/p)", allowed)
+    assert _surviving_urls(out) == set()
+    assert "evil.example" not in out or "](" not in out
+    deep = clean_briefing(
+        "[[[t](https://e1.example)](https://e2.example)](https://e3.example)", allowed
+    )
+    assert _surviving_urls(deep) == set()
+
+
+def test_clean_briefing_nested_story_link_still_works() -> None:
+    allowed = {"https://a.example/1"}
+    out = clean_briefing("[[t](https://a.example/1)](https://evil.example/p)", allowed)
+    assert _surviving_urls(out) <= allowed
+    assert "[t](https://a.example/1)" in out
+
+
+def test_clean_briefing_valid_link_is_unchanged() -> None:
+    body = "See [the paper](https://a.example/1) today."
+    assert clean_briefing(body, {"https://a.example/1"}) == body
