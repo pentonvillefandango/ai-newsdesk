@@ -87,6 +87,42 @@ def research_engine_checker(base_url: str, http: httpx.AsyncClient) -> KeyTester
     return check
 
 
+OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
+OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
+
+
+def bearer_checker(label: str, url: str, http: httpx.AsyncClient) -> KeyTester:
+    """A free, side-effect-free GET that needs the key. Messages never quote the provider's
+    body or the exception text, either of which may echo the key."""
+
+    async def check(key: str, runtime: RuntimeSettings) -> str | None:
+        try:
+            response = await http.get(
+                url, headers={"Authorization": f"Bearer {key}"}, timeout=TEST_TIMEOUT_S
+            )
+        except httpx.HTTPError as exc:
+            return f"Could not reach {label} ({type(exc).__name__})."
+        if response.status_code == 401:
+            return f"{label} rejected the key (401)."
+        if response.status_code == 403:
+            return f"{label} accepted the key but refused access (403)."
+        if response.status_code != 200:
+            return f"{label} answered {response.status_code}."
+        return None
+
+    return check
+
+
+def openai_key_checker(http: httpx.AsyncClient) -> KeyTester:
+    """Listing models is free and proves the key."""
+    return bearer_checker("OpenAI", OPENAI_MODELS_URL, http)
+
+
+def openrouter_key_checker(http: httpx.AsyncClient) -> KeyTester:
+    """/api/v1/key describes the key itself and spends nothing."""
+    return bearer_checker("OpenRouter", OPENROUTER_KEY_URL, http)
+
+
 async def check_typesafe_key(key: str, runtime: RuntimeSettings) -> str | None:
     """One single-question Noul request (optional `jev` extra)."""
     try:
@@ -109,4 +145,6 @@ def default_key_testers(settings: Settings, http: httpx.AsyncClient) -> dict[Api
         "anthropic": check_anthropic_key,
         "research_engine": research_engine_checker(settings.research_engine_url, http),
         "typesafe": check_typesafe_key,
+        "openai": openai_key_checker(http),
+        "openrouter": openrouter_key_checker(http),
     }

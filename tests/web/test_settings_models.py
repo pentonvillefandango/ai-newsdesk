@@ -563,3 +563,25 @@ def test_a_failing_rebuild_after_refresh_keeps_the_old_context(
         assert builds["n"] == 2
     assert OPENROUTER_KEY not in caplog.text
     assert "RuntimeError" in caplog.text
+
+
+# ---- the OpenAI and OpenRouter key rows -------------------------------------------------------
+
+
+@pytest.mark.parametrize(("name", "key"), [("openai", OPENAI_KEY), ("openrouter", OPENROUTER_KEY)])
+def test_new_key_rows_are_tested_and_write_only(
+    app: FastAPI, client: TestClient, key_results: dict[str, str | None], name: str, key: str
+) -> None:
+    page = client.get("/settings").text
+    assert f'id="key-{name}"' in page and f'action="/settings/keys/{name}"' in page
+    key_results[name] = f"rejected {key}"
+    r = _post(client, f"/settings/keys/{name}", {"key": key})
+    assert r.status_code == 422
+    assert key not in r.text and "[key removed]" in r.text
+    assert run(client, app.state.api_keys.resolve_api_key, name) == ""
+    key_results[name] = None
+    r = _post(client, f"/settings/keys/{name}", {"key": key})
+    assert r.status_code == 303
+    assert run(client, app.state.api_keys.resolve_api_key, name) == key
+    for path in ("/settings", "/settings?saved=key", "/"):
+        assert key not in client.get(path).text, path
