@@ -213,7 +213,6 @@ def test_clean_briefing_nested_brackets_cannot_smuggle_a_link() -> None:
     allowed = {"https://a.example/1"}
     out = clean_briefing("[[t](https://x.example/1)](https://evil.example/p)", allowed)
     assert _surviving_urls(out) == set()
-    assert "evil.example" not in out or "](" not in out
     deep = clean_briefing(
         "[[[t](https://e1.example)](https://e2.example)](https://e3.example)", allowed
     )
@@ -230,3 +229,17 @@ def test_clean_briefing_nested_story_link_still_works() -> None:
 def test_clean_briefing_valid_link_is_unchanged() -> None:
     body = "See [the paper](https://a.example/1) today."
     assert clean_briefing(body, {"https://a.example/1"}) == body
+
+
+def _nested(depth: int) -> str:
+    text = "[t](https://e0.example)"
+    for i in range(1, depth):
+        text = f"[{text}](https://e{i}.example)"
+    return text
+
+
+@pytest.mark.parametrize("depth", [11, 50])
+def test_clean_briefing_deep_nesting_leaves_no_link(depth: int) -> None:
+    out = clean_briefing(_nested(depth), {"https://a.example/1"})
+    assert _surviving_urls(out) <= {"https://a.example/1"}
+    assert _surviving_urls(out) == set()

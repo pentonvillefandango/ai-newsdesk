@@ -41,7 +41,6 @@ BRIEFING_SYSTEM = (
 )
 
 _LINK = re.compile(r"\[([^\[\]\n]+)\]\(([^)\s]+)\)")
-_MAX_PASSES = 10
 _EXTRA_BLANK_LINES = re.compile(r"\n{3,}")
 _TRAILING_SPACE = re.compile(r"[ \t]+\n")
 
@@ -75,19 +74,13 @@ def clean_briefing(body: str, allowed_urls: set[str]) -> str:
     link becomes its text). "## " headings and paragraphs pass through unchanged."""
 
     def keep(m: re.Match[str]) -> str:
-        return (
-            m.group(0)
-            if m.group(2) in allowed_urls
-            else m.group(1).replace("[", "").replace("]", "")
-        )
+        return m.group(0) if m.group(2) in allowed_urls else m.group(1)
 
     text = body.replace("\r\n", "\n").replace("\r", "\n")
     text = _TRAILING_SPACE.sub("\n", text)
     text = _EXTRA_BLANK_LINES.sub("\n\n", text)
-    # Stripping a link can expose a new "[text](url)" pair (nested brackets); repeat until stable.
-    for _ in range(_MAX_PASSES):
-        stripped = _LINK.sub(keep, text)
-        if stripped == text:
-            break
+    # Stripping a link can expose a new "[text](url)" pair (nested brackets), so repeat until
+    # stable. No cap: each changing pass strictly shortens the text, so it always terminates.
+    while (stripped := _LINK.sub(keep, text)) != text:
         text = stripped
     return text.strip()
