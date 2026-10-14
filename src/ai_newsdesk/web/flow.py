@@ -56,19 +56,46 @@ def _times(n: int) -> str:
     return {1: "Once a day", 2: "Twice a day"}.get(n, f"{n} times a day")
 
 
-def flow_steps(rs: RuntimeSettings, prices: PriceBook) -> list[FlowStep]:
+def _schedule(rs: RuntimeSettings, scheduler_on: bool) -> FlowStep:
+    times = _times(rs.runs_per_day)
+    if scheduler_on:
+        return FlowStep(
+            "schedule",
+            "tool",
+            "Schedule",
+            times,
+            f"{times}, evenly spaced from midnight, or straight away with Refresh now. Runs"
+            " never overlap.",
+        )
+    return FlowStep(
+        "schedule",
+        "tool",
+        "Schedule",
+        "Scheduler off",
+        "The scheduler is switched off (SCHEDULER_ENABLED=false), so runs, the briefing and"
+        f" the nightly upkeep wait; Refresh now still runs. When it is on: {times.lower()},"
+        " evenly spaced from midnight.",
+    )
+
+
+def _judge_text(rs: RuntimeSettings) -> str:
+    per_call = (
+        "one call per item" if rs.judge_provider == "typesafe" else f"{REVIEW_BATCH} items a call"
+    )
+    return (
+        f"Scores each item's signal from 0 to 10 and flags junk, {per_call}, up to"
+        f" {rs.daily_review_cap} items a day."
+    )
+
+
+def flow_steps(
+    rs: RuntimeSettings, prices: PriceBook, *, scheduler_on: bool = True
+) -> list[FlowStep]:
     each_run = "Each run"
     nightly = f"Nightly, {NIGHTLY_AT:%H:%M}"
     why = " and a “why it matters” line" if rs.why_it_matters else ""
     return [
-        FlowStep(
-            "schedule",
-            "tool",
-            "Schedule",
-            _times(rs.runs_per_day),
-            f"{_times(rs.runs_per_day)}, evenly spaced from midnight, or straight away with"
-            " Refresh now. Runs never overlap.",
-        ),
+        _schedule(rs, scheduler_on),
         FlowStep(
             "collect",
             "tool",
@@ -98,10 +125,8 @@ def flow_steps(rs: RuntimeSettings, prices: PriceBook) -> list[FlowStep]:
             "ai",
             "Judge",
             each_run,
-            f"Scores each item's signal from 0 to 10 and flags junk, {REVIEW_BATCH} items a"
-            f" call, up to {rs.daily_review_cap} items a day.",
+            _judge_text(rs),
             _model("judge", "Judge", rs.judge_provider, rs.judge_model, prices),
-            branch="X posts go to the X page, not into stories.",
         ),
         FlowStep(
             "group",
@@ -110,6 +135,7 @@ def flow_steps(rs: RuntimeSettings, prices: PriceBook) -> list[FlowStep]:
             each_run,
             f"Items scoring {rs.show_threshold} or more join the story the judge matched,"
             " or start a new one.",
+            branch="X posts skip this and go to the X page, not into stories.",
         ),
         FlowStep(
             "merge",

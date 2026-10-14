@@ -233,7 +233,11 @@ async def test_haiku_consolidator_call_shape_and_usage() -> None:
 async def test_haiku_consolidator_errors_and_refusals_give_no_groups() -> None:
     fake = FakeAnthropic([server_error(), reply(None, stop_reason="refusal")])
     c = consolidator_for(fake)
-    assert await c.find_groups([_cs(1, 5), _cs(2, 4)]) == ([], [])
+    groups, usage = await c.find_groups([_cs(1, 5), _cs(2, 4)])
+    # A 500 may have been billed: charged its worst case, once (feedback-2).
+    assert groups == [] and [u.reported_cost_usd for u in usage] == [
+        pytest.approx(c.worst_case_cost([_cs(1, 5), _cs(2, 4)]))
+    ]
     groups, usage = await c.find_groups([_cs(1, 5), _cs(2, 4)])
     assert groups == [] and len(usage) == 1
 
@@ -357,3 +361,5 @@ async def test_a_call_cut_off_by_shutdown_is_recorded_at_its_worst_case(store: S
         await task
     rows = await store._all("SELECT provider, model, purpose, cost_usd FROM spend")
     assert [tuple(r) for r in rows] == [("anthropic", MODEL, "review", pytest.approx(0.003))]
+    [run] = await store.last_runs(1)  # review m2: in the run's cost too
+    assert run.error == "cancelled" and run.cost_usd == pytest.approx(0.003)

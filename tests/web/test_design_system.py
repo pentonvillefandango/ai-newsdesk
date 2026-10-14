@@ -373,3 +373,11 @@ def test_theme_js_sets_the_accent_safely_with_amber_by_default() -> None:
     assert "root.dataset.accent = choice" in js
     assert 'save(ACCENT_KEY, choice, "amber")' in js
     assert "eval" not in js and "innerHTML" not in js
+
+
+def test_the_accent_menu_closes_on_focus_out_and_names_the_current_accent() -> None:
+    """Review m4: tabbing out closes the menu; the toggle says which accent is on."""
+    js = (STATIC_DIR / "theme.js").read_text()
+    assert 'addEventListener("focusout"' in js
+    assert "event.relatedTarget" in js
+    assert '"Accent colour: "' in js

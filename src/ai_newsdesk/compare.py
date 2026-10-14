@@ -22,9 +22,9 @@ from datetime import datetime
 from statistics import fmean
 from typing import Literal
 
-from ai_newsdesk.budget import Budget, abandoned_usage
+from ai_newsdesk.budget import Budget
 from ai_newsdesk.judges.llm import LLMJudge
-from ai_newsdesk.llm.base import ModelClient
+from ai_newsdesk.llm.base import ModelClient, abandoned_usage
 from ai_newsdesk.llm.factory import UnusableModelError
 from ai_newsdesk.models import Purpose, ReviewInput, StoryText, Usage, Verdict, WriteInput
 from ai_newsdesk.pipeline import REVIEW_BATCH, WRITE_BATCH, judge_inputs, stored_signal

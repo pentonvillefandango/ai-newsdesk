@@ -81,6 +81,13 @@
     }
     var buttons = Array.prototype.slice.call(menu.querySelectorAll("[data-accent-choice]"));
 
+    /* Pressed states, and the toggle's name with the accent in use ("Accent colour: Rose"). */
+    function sync() {
+      pressed(buttons, "data-accent-choice", accent);
+      var name = accent.charAt(0).toUpperCase() + accent.slice(1);
+      toggle.setAttribute("aria-label", "Accent colour: " + name);
+    }
+
     function open() {
       menu.hidden = false;
       toggle.setAttribute("aria-expanded", "true");
@@ -111,7 +118,7 @@
         accent = choice;
         save(ACCENT_KEY, choice, "amber");
         applyAccent(choice);
-        pressed(buttons, "data-accent-choice", accent);
+        sync();
         close(true);
       });
       button.addEventListener("keydown", function (event) {
@@ -126,12 +133,20 @@
     document.addEventListener("keydown", function (event) {
       if (event.key === "Escape") close(true);
     });
+    /* Tabbing out of the menu closes it. A click gives no relatedTarget in some browsers, so
+       only a known new focus outside counts; clicks outside are handled below. */
+    [menu, toggle].forEach(function (el) {
+      el.addEventListener("focusout", function (event) {
+        var next = event.relatedTarget;
+        if (next && !menu.contains(next) && !toggle.contains(next)) close(false);
+      });
+    });
     document.addEventListener("click", function (event) {
       if (!menu.hidden && !menu.contains(event.target) && !toggle.contains(event.target)) {
         close(false);
       }
     });
-    pressed(buttons, "data-accent-choice", accent);
+    sync();
   }
 
   document.addEventListener("DOMContentLoaded", function () {

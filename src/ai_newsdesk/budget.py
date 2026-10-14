@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 
+from ai_newsdesk.llm.base import abandoned_usage
 from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.models import Purpose, Usage
 from ai_newsdesk.pricing import Pricing
@@ -19,17 +20,6 @@ from ai_newsdesk.runtime_settings import RuntimeSettings
 from ai_newsdesk.store.store import Store
 
 log = logging.getLogger(__name__)
-
-
-def abandoned_usage(provider: str, model: str, purpose: Purpose, worst_case_usd: float) -> Usage:
-    """The spend row for a call we gave up on: no tokens are known, so it costs its worst case."""
-    return Usage(
-        provider=provider,
-        model=model,
-        purpose=purpose,
-        input_tokens=0,
-        reported_cost_usd=worst_case_usd,
-    )
 
 
 class Budget:

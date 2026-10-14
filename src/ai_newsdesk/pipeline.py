@@ -25,7 +25,7 @@ from ai_newsdesk import cluster, prefilter
 from ai_newsdesk.briefing import briefing_date_label
 from ai_newsdesk.budget import Budget
 from ai_newsdesk.config import Settings
-from ai_newsdesk.consolidate import consolidate
+from ai_newsdesk.consolidate import ConsolidationResult, consolidate
 from ai_newsdesk.dedupe import DEDUPE_WINDOW_HOURS, find_story_link
 from ai_newsdesk.enrich import enrich_bodies
 from ai_newsdesk.models import (
@@ -356,8 +356,11 @@ async def _consolidate(ctx: PipelineContext, now: datetime, report: RunReport) -
     """Merge open stories that report the same event, so the writer sees each event once."""
     if ctx.consolidator is None:
         return
-    result = await consolidate(ctx.store, ctx.consolidator, ctx.budget, now)
-    report.cost_usd += result.cost_usd
+    result = ConsolidationResult()
+    try:
+        await consolidate(ctx.store, ctx.consolidator, ctx.budget, now, into=result)
+    finally:  # a call cut off by shutdown counts in the run's cost too
+        report.cost_usd += result.cost_usd
     report.counts["stories_merged"] = result.merged
     report.counts["consolidate_skipped"] = int(result.skipped)
 

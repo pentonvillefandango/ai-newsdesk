@@ -100,7 +100,8 @@ async def test_review_tolerates_per_item_failures(monkeypatch: pytest.MonkeyPatc
         "typesafe",
         "jev-1.13.0",
         Purpose.REVIEW,
-        2400,
+        # Two answered items, plus the failed one at its worst case: it may have been billed.
+        2400 + judge.item_worst_tokens(inp(2, "Broken")),
     )
     assert client.states[0]["source"] == {"name": "Lab blog", "kind": "feed", "trust": "primary"}
 

@@ -10,6 +10,7 @@ that times out may still be billed, so it is recorded at its worst case.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import Callable, Collection
 from contextlib import AbstractAsyncContextManager
@@ -18,13 +19,14 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from ai_newsdesk.budget import abandoned_usage
-from ai_newsdesk.llm.base import ModelClient, StructuredResult, describe_error
+from ai_newsdesk.llm.base import ModelClient, StructuredResult, abandoned_usage, describe_error
 from ai_newsdesk.llm.catalogue import Catalogue
 from ai_newsdesk.llm.factory import UnusableModelError
 from ai_newsdesk.llm.prices import Price, PriceBook
 from ai_newsdesk.llm.validate import PROVIDER_LABELS, validate_model_choice
 from ai_newsdesk.models import Purpose, Usage
+
+log = logging.getLogger(__name__)
 
 # Room for a reasoning model's thinking as well as the ~10-token answer: a lower cap makes
 # such models stop at the limit and the test fail although the model works.
@@ -125,7 +127,12 @@ async def run_model_test(
                 usage = abandoned_usage(provider, model, Purpose.REVIEW, worst)
                 result, timed_out = StructuredResult(usage=usage), True
             except asyncio.CancelledError:  # shutdown mid-call: the same rule, then stop
-                await budget.record(abandoned_usage(provider, model, Purpose.REVIEW, worst))
+                try:
+                    await budget.record(abandoned_usage(provider, model, Purpose.REVIEW, worst))
+                except Exception as exc:  # the store may already be closed
+                    log.warning(
+                        "a cancelled test's worst case was not recorded (%s)", type(exc).__name__
+                    )
                 raise
             except Exception as exc:  # clients should not raise; never show the message
                 result = StructuredResult(error=describe_error(exc))

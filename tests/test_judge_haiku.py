@@ -1,18 +1,25 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
+from ai_newsdesk.budget import Budget
 from ai_newsdesk.claude_common import (
     SCHEMA_OVERHEAD_TOKENS,
     estimate_tokens,
     safe_json,
     worst_case_usd,
 )
+from ai_newsdesk.clock import FixedClock
 from ai_newsdesk.judges.llm import BatchJudgement, CategoryName, ItemJudgement, LLMJudge
 from ai_newsdesk.judges.prompts import JUDGE_SYSTEM, NO_TEXT, render_items
 from ai_newsdesk.llm.anthropic_client import AnthropicClient
 from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.models import Category, Purpose, ReviewInput, SourceKind, StoryRef, Trust
 from ai_newsdesk.pricing import Pricing
+from ai_newsdesk.runtime_settings import RuntimeSettings
+from ai_newsdesk.store.store import Store
 from tests.fake_anthropic import (
     FakeAnthropic,
     as_client,
@@ -22,6 +29,7 @@ from tests.fake_anthropic import (
     server_error,
 )
 
+NOW = datetime(2026, 10, 14, 9, 0, tzinfo=UTC)
 PRICING = Pricing.load(Path(__file__).resolve().parents[1] / "config" / "pricing.yaml")
 PRICES = PriceBook(PRICING)
 MODEL = "claude-haiku-5-5"
@@ -177,7 +185,24 @@ async def test_status_connection_and_unexpected_errors_never_raise() -> None:
     judge = judge_for(fake, batch_size=1)
     result = await judge.review([inp(1), inp(2), inp(3)])
     assert result.failed_item_ids == [1, 2, 3]
-    assert result.usage == []
+    # Each may have been billed: one worst-case, token-free row per call (feedback-2).
+    assert [(u.input_tokens, u.output_tokens) for u in result.usage] == [(0, 0)] * 3
+    assert [u.reported_cost_usd for u in result.usage] == [
+        pytest.approx(judge.worst_case_cost([inp(i)])) for i in (1, 2, 3)
+    ]
+
+
+async def test_a_failed_call_that_may_be_billed_is_in_the_months_spend(store: Store) -> None:
+    """End to end: a 500 from the judge's call lands in spend once, at its worst case."""
+    fake = FakeAnthropic([server_error()])
+    judge = judge_for(fake)
+    budget = Budget(store, PRICING, FixedClock(NOW), RuntimeSettings(), tz="Europe/London")
+    await budget.refresh()
+    worst = judge.worst_case_cost([inp(1)])
+    result = await judge.review([inp(1)])
+    for usage in result.usage:
+        await budget.record(usage)
+    assert await store.month_spend(NOW, "Europe/London") == pytest.approx(worst)
 
 
 async def test_empty_input_makes_no_call() -> None:

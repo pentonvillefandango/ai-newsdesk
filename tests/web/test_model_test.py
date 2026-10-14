@@ -267,3 +267,30 @@ def _request() -> Any:
     import httpx
 
     return httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+
+
+class ClosedStoreBudget(FakeBudget):
+    async def record(self, usage: Usage) -> float:
+        raise RuntimeError("the store is closed")
+
+
+async def test_a_test_cancelled_at_shutdown_never_raises_from_a_closed_store(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Review m1: uvicorn may cancel the request after the store has closed: the row is
+    logged and dropped, and the cancel still goes through."""
+    started = asyncio.Event()
+
+    class Started(SlowClient):
+        async def structured(self, **kwargs: Any) -> Any:  # type: ignore[override]
+            started.set()
+            return await super().structured(**kwargs)
+
+    task = asyncio.create_task(
+        _test("openrouter", "google/gemini-3.8-flash", Clients(Started([])), ClosedStoreBudget())
+    )
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert "not recorded" in caplog.text

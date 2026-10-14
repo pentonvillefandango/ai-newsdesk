@@ -117,10 +117,16 @@ class ConsolidationResult:
 
 
 async def consolidate(
-    store: Store, consolidator: Consolidator, budget: Budget, now: datetime
+    store: Store,
+    consolidator: Consolidator,
+    budget: Budget,
+    now: datetime,
+    *,
+    into: ConsolidationResult | None = None,
 ) -> ConsolidationResult:
-    """One consolidation pass. Never raises (failures are logged and the result is empty)."""
-    result = ConsolidationResult()
+    """One consolidation pass. Never raises (failures are logged and the result is empty),
+    except for a cancel; pass `into` to keep the cost recorded before one."""
+    result = into if into is not None else ConsolidationResult()
     try:
         stories = await store.consolidation_candidates(
             now, hours=WINDOW_HOURS, limit=CANDIDATE_LIMIT
@@ -140,7 +146,7 @@ async def consolidate(
         try:
             groups, usage = await consolidator.find_groups(stories)
         except asyncio.CancelledError:  # shutdown mid-call: it may still be billed
-            await budget.record_abandoned(
+            result.cost_usd += await budget.record_abandoned(
                 consolidator.provider, consolidator.model, Purpose.REVIEW, worst
             )
             raise

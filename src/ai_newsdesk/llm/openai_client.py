@@ -13,7 +13,7 @@ import httpx
 import openai
 from pydantic import BaseModel, ValidationError
 
-from ai_newsdesk.llm.base import StructuredResult, describe_error, prompt_tokens
+from ai_newsdesk.llm.base import StructuredResult, failed_call, prompt_tokens
 from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.models import Purpose, Usage
 from ai_newsdesk.pricing import UnknownModelError
@@ -154,6 +154,7 @@ class OpenAICompatibleClient:
                 },
                 "usage": {"include": True},
             }
+        json_schema = strict_schema(schema)  # raises before anything is sent
         try:
             response = await self._client.chat.completions.create(
                 model=self.model,
@@ -166,7 +167,7 @@ class OpenAICompatibleClient:
                     "json_schema": {
                         "name": schema.__name__,
                         "strict": True,
-                        "schema": strict_schema(schema),
+                        "schema": json_schema,
                     },
                 },
                 max_tokens=max_tokens if openrouter else openai.omit,
@@ -174,7 +175,13 @@ class OpenAICompatibleClient:
                 extra_body=extra_body,
             )
         except Exception as exc:  # never raises: the caller's items fail
-            return StructuredResult(error=describe_error(exc))
+            return failed_call(
+                exc,
+                self.provider,
+                self.model,
+                purpose,
+                lambda: self.worst_case_usd(system=system, user=user, max_tokens=max_tokens),
+            )
         usage = self._usage(response, purpose, (prompt_tokens(system, user), max_tokens))
         if not response.choices:
             return StructuredResult(usage=usage, error="no choices in the response")

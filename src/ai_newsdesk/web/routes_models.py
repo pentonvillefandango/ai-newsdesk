@@ -80,7 +80,9 @@ async def _render(
             "values": form,
             "errors": errors or {},
             # The diagram shows what is saved, not an unsaved form being corrected.
-            "flow": flow_steps(runtime, app.state.prices),
+            "flow": flow_steps(
+                runtime, app.state.prices, scheduler_on=app.state.settings.scheduler_enabled
+            ),
             "model_rows": model_rows(form, shortlist=app.state.shortlist, prices=app.state.prices),
             "datalists": datalists(app.state.prices, catalogue),
             "judge_warning": JUDGE_WARNING if judge_warning(form) else None,

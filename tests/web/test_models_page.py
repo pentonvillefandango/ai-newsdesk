@@ -764,11 +764,14 @@ def test_the_page_has_the_rows_the_form_and_the_diagram(app: FastAPI, client: Te
     collect = _step(diagram, "collect")
     for source in ("RSS", "Hacker News", "arXiv", "GitHub releases", "site:x.com"):
         assert source in collect, source
+    # The test app runs with the scheduler switched off, and the diagram says so.
+    assert "Scheduler off" in _step(diagram, "schedule")
     assert "4 times a day" in _step(diagram, "schedule")
     assert "Refresh now" in _step(diagram, "schedule")
     assert "07:00" in _step(diagram, "briefing")
-    assert "500 items a day" in _step(diagram, "judge")
-    assert "X page" in _step(diagram, "judge")  # X posts branch off before stories
+    assert "10 items a call, up to 500 items a day" in _step(diagram, "judge")
+    # X posts are judged, then split off where stories are formed (cluster.attach).
+    assert "X page" in _step(diagram, "group") and "X page" not in _step(diagram, "judge")
     assert "OpenRouter" in _step(diagram, "nightly")
     # Arrows are decorative; a legend explains the two kinds of box.
     assert '<span class="flow__arrow" aria-hidden="true"></span>' in diagram
@@ -794,7 +797,9 @@ def test_the_diagram_follows_the_saved_choice(app: FastAPI, client: TestClient) 
     write = _step(diagram, "write")
     assert "OpenRouter" in write and "google/gemini-3.8-flash" in write
     assert "$0.75 in, $3.75 out per million tokens" in write
-    assert "TypeSafe (Jev)" in _step(diagram, "judge") and "jev-1.13.0" in diagram
+    judge = _step(diagram, "judge")
+    assert "TypeSafe (Jev)" in judge and "jev-1.13.0" in judge
+    assert "one call per item" in judge and "items a call" not in judge
     assert "12 times a day" in _step(diagram, "schedule")
     assert "06:30" in _step(diagram, "briefing")
 
@@ -830,3 +835,13 @@ def test_a_models_save_redirects_to_models(app: FastAPI, client: TestClient) -> 
     assert r.status_code == 303
     assert r.headers["location"] == "/models?saved=1"
     assert "Models saved." in client.get(r.headers["location"]).text
+
+
+def test_the_schedule_step_with_the_scheduler_on() -> None:
+    from ai_newsdesk.web.flow import flow_steps
+    from tests.llm.test_validate import PRICES
+
+    on = flow_steps(RuntimeSettings(runs_per_day=6), PRICES, scheduler_on=True)[0]
+    off = flow_steps(RuntimeSettings(runs_per_day=6), PRICES, scheduler_on=False)[0]
+    assert (on.when, off.when) == ("6 times a day", "Scheduler off")
+    assert "Refresh now" in on.text and "Refresh now" in off.text

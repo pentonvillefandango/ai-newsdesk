@@ -182,8 +182,12 @@ class JevJudge:
         return AsyncTypeSafeClient(api_key=self._api_key, model=self.model)
 
     def worst_case_cost(self, inputs: list[ReviewInput]) -> float:
-        tokens = sum(estimate_tokens(json.dumps(state_for(i))) + QUESTION_BYTES for i in inputs)
+        tokens = sum(self.item_worst_tokens(i) for i in inputs)
         return worst_case_usd(self._pricing, self.model, tokens, 0)
+
+    @staticmethod
+    def item_worst_tokens(inp: ReviewInput) -> int:
+        return estimate_tokens(json.dumps(state_for(inp))) + QUESTION_BYTES
 
     async def review(self, inputs: list[ReviewInput]) -> JudgeResult:
         if not inputs:
@@ -205,6 +209,8 @@ class JevJudge:
                         verdicts.append(verdict_from_answers(inp.item_id, r.answers))
                     except Exception as exc:  # one item fails, not the batch
                         log.warning("jev item %d failed: %s", inp.item_id, type(exc).__name__)
+                        # It may still have been billed: count its worst case.
+                        tokens += self.item_worst_tokens(inp)
                         failed.append(inp.item_id)
 
                 await asyncio.gather(*(one(i) for i in inputs))

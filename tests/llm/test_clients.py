@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+import anthropic
 import httpx
 import pytest
 from pydantic import BaseModel
@@ -31,7 +32,15 @@ from ai_newsdesk.runtime_settings import RuntimeSettings
 from ai_newsdesk.store.store import Store
 from ai_newsdesk.writer import BriefingDoc, StoryBatch
 from tests.conftest import ROOT, TEST_NOW
-from tests.fake_anthropic import FakeAnthropic, as_client, connection_error, reply, server_error
+from tests.fake_anthropic import (
+    REQUEST,
+    FakeAnthropic,
+    as_client,
+    connection_error,
+    rate_limited,
+    reply,
+    server_error,
+)
 from tests.fake_openai import FAKE_KEY, FakeOpenAI, completion
 
 PRICING = Pricing.load(ROOT / "config" / "pricing.yaml")
@@ -135,9 +144,44 @@ async def test_anthropic_length_is_a_failure() -> None:
     ("exc", "expected"), [(server_error(), "HTTP 500"), (connection_error(), "connection error")]
 )
 async def test_anthropic_transport_error_is_scrubbed(exc: Exception, expected: str) -> None:
-    result = await call(anthropic_client(FakeAnthropic([exc])))
-    assert (result.parsed, result.usage, result.refused) == (None, None, False)
+    client = anthropic_client(FakeAnthropic([exc]))
+    result = await call(client)
+    assert (result.parsed, result.refused) == (None, False)
     assert result.error is not None and expected in result.error
+    # The request may have reached Anthropic: recorded once, at the worst case (feedback-2).
+    assert result.usage is not None
+    assert (result.usage.input_tokens, result.usage.output_tokens) == (0, 0)
+    assert result.usage.reported_cost_usd == pytest.approx(
+        client.worst_case_usd(system=SYSTEM, user=USER, max_tokens=100)
+    )
+
+
+def _status_error(status: int) -> Exception:
+    response: Any = httpx.Response(status, request=REQUEST)
+    cls = {401: anthropic.AuthenticationError, 400: anthropic.BadRequestError}.get(
+        status, anthropic.APIStatusError
+    )
+    return cls("nope", response=response, body=None)
+
+
+@pytest.mark.parametrize(
+    ("exc", "billed"),
+    [
+        (rate_limited(), False),
+        (_status_error(401), False),
+        (_status_error(400), False),
+        (server_error(), True),
+        (_status_error(529), True),
+        (anthropic.APITimeoutError(request=REQUEST), True),
+        (ValueError("parsing broke after the reply"), True),  # unsure: recorded
+    ],
+)
+async def test_anthropic_failures_are_recorded_only_if_they_may_be_billed(
+    exc: Exception, billed: bool
+) -> None:
+    result = await call(anthropic_client(FakeAnthropic([exc])))
+    assert result.parsed is None
+    assert (result.usage is not None) is billed
 
 
 def test_anthropic_worst_case_matches_the_spec_formula() -> None:
@@ -248,6 +292,33 @@ async def test_openai_connection_error_is_scrubbed(provider: str, model: str) ->
     result = await call(openai_client(fake, provider, model))
     assert result.error is not None and "connection error" in result.error
     assert FAKE_KEY not in result.error
+    assert result.usage is not None and result.usage.reported_cost_usd is not None
+
+
+@pytest.mark.parametrize(("provider", "model"), PROVIDER_MODELS)
+@pytest.mark.parametrize(
+    ("reply_", "billed"),
+    [
+        (httpx.Response(400, json={"error": {"message": "bad"}}), False),
+        (httpx.Response(429, json={"error": {"message": "slow down"}}), False),
+        (httpx.Response(500, json={"error": {"message": "boom"}}), True),
+        (httpx.Response(502, json={"error": {"message": "gateway"}}), True),
+        (httpx.ReadTimeout("no answer"), True),
+        (httpx.RemoteProtocolError("dropped"), True),
+    ],
+)
+async def test_openai_failures_are_recorded_only_if_they_may_be_billed(
+    provider: str, model: str, reply_: httpx.Response | Exception, billed: bool
+) -> None:
+    client = openai_client(FakeOpenAI([reply_]), provider, model)
+    result = await call(client)
+    assert result.parsed is None
+    assert (result.usage is not None) is billed
+    if result.usage is not None:
+        assert (result.usage.provider, result.usage.model) == (provider, model)
+        assert result.usage.reported_cost_usd == pytest.approx(
+            client.worst_case_usd(system=SYSTEM, user=USER, max_tokens=100)
+        )
 
 
 @pytest.mark.parametrize(("provider", "model"), PROVIDER_MODELS)

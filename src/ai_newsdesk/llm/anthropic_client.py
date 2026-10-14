@@ -8,7 +8,7 @@ import anthropic
 from anthropic.types import OutputConfigParam, TextBlockParam
 from pydantic import BaseModel
 
-from ai_newsdesk.llm.base import StructuredResult, describe_error, prompt_tokens
+from ai_newsdesk.llm.base import StructuredResult, failed_call, prompt_tokens
 from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.models import Purpose, Usage
 
@@ -75,7 +75,13 @@ class AnthropicClient:
                 output_config=config,
             )
         except Exception as exc:  # never raises: the caller's items fail
-            return StructuredResult(error=describe_error(exc))
+            return failed_call(
+                exc,
+                self.provider,
+                self.model,
+                purpose,
+                lambda: self.worst_case_usd(system=system, user=user, max_tokens=max_tokens),
+            )
         usage = usage_from_response(response, self.model, purpose)
         if response.stop_reason == "refusal":
             return StructuredResult(usage=usage, refused=True, error="refused")
