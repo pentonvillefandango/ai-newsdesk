@@ -5,6 +5,7 @@ from typing import Protocol
 
 from ai_newsdesk.models import (
     BriefingStory,
+    ConsolidationStory,
     JudgeResult,
     ReviewInput,
     SearchHit,
@@ -61,3 +62,14 @@ class Writer(Protocol):
     async def write_briefing(
         self, stories: list[BriefingStory], date_label: str
     ) -> tuple[str | None, list[Usage]]: ...
+
+
+class Consolidator(Protocol):
+    model: str
+
+    def worst_case_cost(self, stories: list[ConsolidationStory]) -> float: ...  # USD
+
+    # never raises; groups of story ids that report the same event (unvalidated)
+    async def find_groups(
+        self, stories: list[ConsolidationStory]
+    ) -> tuple[list[list[int]], list[Usage]]: ...

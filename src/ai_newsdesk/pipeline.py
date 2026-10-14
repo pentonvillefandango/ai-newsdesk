@@ -1,13 +1,15 @@
 """One collection-and-review run, and the daily briefing.
 
 Failures are local: a source, an item or an AI batch that fails is recorded and the run carries
-on. Every AI call is preceded by a budget pre-check using that call's worst-case cost. Nothing is
-retried within a run: an item the judge fails on is marked `review_failed` (and shown), and
-`Store.queued_review_inputs` offers it again on the next run, up to MAX_REVIEW_ATTEMPTS; a story
-the writer leaves out is counted with `Store.mark_text_failed` and offered again the same way.
-An item deleted mid-run (its source removed) is skipped with a warning, so the other verdicts are
-still saved; items a crashed run left `new` are put back through the pre-filter by the next run;
-and the runs row is always finished, with error "cancelled" when the task is cancelled.
+on. After clustering, `consolidate.consolidate` merges open stories that report the same event
+(one Claude call), before the writer runs. Every AI call is preceded by a budget pre-check using
+that call's worst-case cost. Nothing is retried within a run: an item the judge fails on is
+marked `review_failed` (and shown), and `Store.queued_review_inputs` offers it again on the next
+run, up to MAX_REVIEW_ATTEMPTS; a story the writer leaves out is counted with
+`Store.mark_text_failed` and offered again the same way. An item deleted mid-run (its source
+removed) is skipped with a warning, so the other verdicts are still saved; items a crashed run
+left `new` are put back through the pre-filter by the next run; and the runs row is always
+finished, with error "cancelled" when the task is cancelled.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from ai_newsdesk import cluster, prefilter
 from ai_newsdesk.briefing import briefing_date_label
 from ai_newsdesk.budget import Budget
 from ai_newsdesk.config import Settings
+from ai_newsdesk.consolidate import consolidate
 from ai_newsdesk.dedupe import DEDUPE_WINDOW_HOURS, find_story_link
 from ai_newsdesk.enrich import enrich_bodies
 from ai_newsdesk.models import (
@@ -33,7 +36,7 @@ from ai_newsdesk.models import (
     SourceResult,
     Verdict,
 )
-from ai_newsdesk.protocols import Clock, Judge, ResearchEngine, Source, Writer
+from ai_newsdesk.protocols import Clock, Consolidator, Judge, ResearchEngine, Source, Writer
 from ai_newsdesk.runtime_settings import RuntimeSettings, load_runtime_settings
 from ai_newsdesk.store.store import Store
 
@@ -61,6 +64,8 @@ COUNT_KEYS = (
     "review_failed",
     "budget_skipped",
     "stories_touched",
+    "stories_merged",
+    "consolidate_skipped",
     "written",
     "write_failed",
 )
@@ -76,6 +81,7 @@ class PipelineContext:
     budget: Budget
     clock: Clock
     settings: Settings
+    consolidator: Consolidator | None = None  # None: the consolidation step is off
 
 
 @dataclass
@@ -176,6 +182,7 @@ async def _run(ctx: PipelineContext, report: RunReport) -> None:
             report.counts["enrich_failed"] = 1
     report.counts["expired"] = await ctx.store.expire_old_queued(now, hours=QUEUE_EXPIRY_HOURS)
     await _review(ctx, rs, now, report)
+    await _consolidate(ctx, now, report)
     await _write(ctx, rs, report)
 
 
@@ -323,6 +330,16 @@ async def _review(
     report.counts["review_failed"] = len(failed_ids)
     touched = await cluster.attach(ctx.store, judged, links, rs.show_threshold, now, current)
     report.counts["stories_touched"] = len(touched)
+
+
+async def _consolidate(ctx: PipelineContext, now: datetime, report: RunReport) -> None:
+    """Merge open stories that report the same event, so the writer sees each event once."""
+    if ctx.consolidator is None:
+        return
+    result = await consolidate(ctx.store, ctx.consolidator, ctx.budget, now)
+    report.cost_usd += result.cost_usd
+    report.counts["stories_merged"] = result.merged
+    report.counts["consolidate_skipped"] = int(result.skipped)
 
 
 async def _write(ctx: PipelineContext, rs: RuntimeSettings, report: RunReport) -> None:

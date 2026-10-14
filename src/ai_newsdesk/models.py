@@ -104,6 +104,16 @@ class Verdict(BaseModel):
     same_story_id: int | None = None
 
 
+class ConsolidationStory(BaseModel):
+    """An open story offered to the consolidation pass (feedback-1, A1)."""
+
+    id: int
+    headline: str
+    category: Category
+    score: float
+    first_seen_at: datetime
+
+
 class Usage(BaseModel):
     provider: str  # "anthropic" | "typesafe"
     model: str

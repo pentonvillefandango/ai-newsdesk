@@ -20,6 +20,7 @@ from ai_newsdesk import taste
 from ai_newsdesk.budget import Budget
 from ai_newsdesk.clock import SystemClock
 from ai_newsdesk.config import Settings
+from ai_newsdesk.consolidate import HaikuConsolidator
 from ai_newsdesk.judges.haiku import HaikuJudge
 from ai_newsdesk.judges.jev import JevJudge
 from ai_newsdesk.normalise import canonical_url
@@ -86,6 +87,12 @@ async def build_context(deps: AppDeps) -> PipelineContext:
         budget=Budget(store, deps.pricing, deps.clock, runtime, tz=settings.tz),
         clock=deps.clock,
         settings=settings,
+        # The judge model when the judge is Claude; Jev models cannot take this call.
+        consolidator=HaikuConsolidator(
+            client,
+            runtime.judge_model if runtime.judge_provider == "anthropic" else runtime.writer_model,
+            deps.pricing,
+        ),
     )
 
 
