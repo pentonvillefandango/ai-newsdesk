@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from html.parser import HTMLParser
 
 from fastapi import FastAPI
@@ -121,3 +122,27 @@ def test_every_page_loads_only_local_assets(app: FastAPI, client: TestClient) ->
     login_page = client.get("/login")
     assert login_page.status_code == 200
     _check_page(login_page.text, "/login")
+
+
+def _luminance(hex_colour: str) -> float:
+    def channel(c: int) -> float:
+        s = c / 255
+        return s / 12.92 if s <= 0.04045 else ((s + 0.055) / 1.055) ** 2.4
+
+    h = hex_colour.lstrip("#")
+    r, g, b = (channel(int(h[i : i + 2], 16)) for i in (0, 2, 4))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast(a: str, b: str) -> float:
+    la, lb = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+def test_light_accent_meets_wcag_aa_for_small_text() -> None:
+    css = (STATIC_DIR / "app.css").read_text()
+    light = css.split("@media (prefers-color-scheme: dark)")[0]
+    tokens = dict(re.findall(r"--(accent|paper|surface):\s*(#[0-9a-fA-F]{6});", light))
+    assert set(tokens) == {"accent", "paper", "surface"}
+    for bg in ("paper", "surface"):
+        assert _contrast(tokens["accent"], tokens[bg]) >= 4.5, bg
