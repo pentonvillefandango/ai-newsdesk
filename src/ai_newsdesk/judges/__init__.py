@@ -1,1 +1,1 @@
-"""Judge implementations: HaikuJudge (default) and JevJudge (optional `jev` extra)."""
+"""Judge implementations: LLMJudge (default) and JevJudge (optional `jev` extra)."""

@@ -11,12 +11,14 @@ import pytest
 from ai_newsdesk import consolidate
 from ai_newsdesk.consolidate import (
     CONSOLIDATE_SYSTEM,
-    HaikuConsolidator,
+    LLMConsolidator,
     StoryGroups,
     pick_keep,
     render_stories,
     valid_groups,
 )
+from ai_newsdesk.llm.anthropic_client import AnthropicClient
+from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.models import Category, ConsolidationStory, SourceKind, Trust, Verdict
 from ai_newsdesk.pipeline import COUNT_KEYS, run_once
 from ai_newsdesk.pricing import Pricing
@@ -198,16 +200,23 @@ def test_render_stories_wraps_untrusted_headlines() -> None:
     )
 
 
-# ---- HaikuConsolidator --------------------------------------------------------------------------
+# ---- LLMConsolidator ----------------------------------------------------------------------------
 
 
 def pricing() -> Pricing:
     return Pricing.load(PRICING_PATH)
 
 
+def consolidator_for(fake: FakeAnthropic) -> LLMConsolidator:
+    """The production wiring: no cached system block for this one-off call."""
+    return LLMConsolidator(
+        AnthropicClient(as_client(fake), MODEL, PriceBook(pricing()), cache_system=False)
+    )
+
+
 async def test_haiku_consolidator_call_shape_and_usage() -> None:
     fake = FakeAnthropic([reply(StoryGroups(groups=[[1, 2]]))])
-    c = HaikuConsolidator(as_client(fake), MODEL, pricing())
+    c = consolidator_for(fake)
     groups, usage = await c.find_groups([_cs(1, 5), _cs(2, 4)])
     assert groups == [[1, 2]]
     assert len(usage) == 1 and usage[0].purpose.value == "review" and usage[0].model == MODEL
@@ -217,19 +226,19 @@ async def test_haiku_consolidator_call_shape_and_usage() -> None:
     assert call["output_config"] == {"effort": "low"}
     assert "temperature" not in call
     assert [m["role"] for m in call["messages"]] == ["user"]  # no prefill
-    assert call["system"][0]["text"] == CONSOLIDATE_SYSTEM
+    assert call["system"] == [{"type": "text", "text": CONSOLIDATE_SYSTEM}]  # no cache_control
 
 
 async def test_haiku_consolidator_errors_and_refusals_give_no_groups() -> None:
     fake = FakeAnthropic([server_error(), reply(None, stop_reason="refusal")])
-    c = HaikuConsolidator(as_client(fake), MODEL, pricing())
+    c = consolidator_for(fake)
     assert await c.find_groups([_cs(1, 5), _cs(2, 4)]) == ([], [])
     groups, usage = await c.find_groups([_cs(1, 5), _cs(2, 4)])
     assert groups == [] and len(usage) == 1
 
 
 def test_haiku_consolidator_worst_case_covers_the_prompt() -> None:
-    c = HaikuConsolidator(as_client(FakeAnthropic([])), MODEL, pricing())
+    c = consolidator_for(FakeAnthropic([]))
     stories = [_cs(i, 5) for i in range(1, 50)]
     small = c.worst_case_cost(stories[:2])
     big = c.worst_case_cost(stories)
@@ -298,7 +307,7 @@ async def test_run_continues_when_client_errors(store: Store, db_path: str) -> N
     ctx = make_ctx(
         store,
         MutableClock(NOW),
-        consolidator=HaikuConsolidator(as_client(fake), MODEL, pricing()),
+        consolidator=consolidator_for(fake),
     )
     report = await run_once(ctx, "test")
     assert report.error is None

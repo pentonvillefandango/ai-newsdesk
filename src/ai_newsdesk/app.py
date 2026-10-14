@@ -20,9 +20,10 @@ from ai_newsdesk import taste
 from ai_newsdesk.budget import Budget
 from ai_newsdesk.clock import SystemClock
 from ai_newsdesk.config import Settings
-from ai_newsdesk.consolidate import HaikuConsolidator
-from ai_newsdesk.judges.haiku import HaikuJudge
+from ai_newsdesk.consolidate import LLMConsolidator
 from ai_newsdesk.judges.jev import JevJudge
+from ai_newsdesk.judges.llm import LLMJudge
+from ai_newsdesk.llm.anthropic_client import AnthropicClient
 from ai_newsdesk.llm.catalogue import CatalogueFetch, ModelCatalogue, http_fetcher
 from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.normalise import canonical_url
@@ -38,7 +39,7 @@ from ai_newsdesk.web.app_routes import build_router
 from ai_newsdesk.web.deps import STATIC_DIR
 from ai_newsdesk.web.keys import KeyTester, default_key_testers
 from ai_newsdesk.web.security import install_security
-from ai_newsdesk.writer import HaikuWriter
+from ai_newsdesk.writer import LLMWriter
 
 log = logging.getLogger("ai_newsdesk.app")
 
@@ -79,23 +80,29 @@ async def build_context(deps: AppDeps) -> PipelineContext:
             await keys.resolve_api_key("typesafe"), deps.pricing, model=runtime.judge_model
         )
     else:
-        judge = HaikuJudge(client, runtime.judge_model, deps.pricing)
+        judge = LLMJudge(AnthropicClient(client, runtime.judge_model, deps.prices))
     return PipelineContext(
         store=store,
         sources=build_sources(deps.http, research, deps.clock),
         research_engine=research,
         judge=judge,
-        writer=HaikuWriter(
-            client, runtime.writer_model, deps.pricing, briefing_model=runtime.briefing_model
+        writer=LLMWriter(
+            AnthropicClient(client, runtime.writer_model, deps.prices),
+            AnthropicClient(client, runtime.briefing_model, deps.prices, effort="medium"),
         ),
         budget=Budget(store, deps.pricing, deps.clock, runtime, tz=settings.tz, prices=deps.prices),
         clock=deps.clock,
         settings=settings,
         # The judge model when the judge is Claude; Jev models cannot take this call.
-        consolidator=HaikuConsolidator(
-            client,
-            runtime.judge_model if runtime.judge_provider == "anthropic" else runtime.writer_model,
-            deps.pricing,
+        consolidator=LLMConsolidator(
+            AnthropicClient(
+                client,
+                runtime.judge_model
+                if runtime.judge_provider == "anthropic"
+                else runtime.writer_model,
+                deps.prices,
+                cache_system=False,
+            )
         ),
     )
 

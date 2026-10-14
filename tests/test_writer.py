@@ -11,13 +11,28 @@ from ai_newsdesk.briefing import (
     render_briefing_request,
 )
 from ai_newsdesk.claude_common import SCHEMA_OVERHEAD_TOKENS
+from ai_newsdesk.llm.anthropic_client import AnthropicClient
+from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.models import BriefingStory, Category, Purpose, WriteInput
 from ai_newsdesk.pricing import Pricing
-from ai_newsdesk.writer import WRITER_SYSTEM, BriefingDoc, HaikuWriter, StoryBatch, StoryWriting
+from ai_newsdesk.writer import WRITER_SYSTEM, BriefingDoc, LLMWriter, StoryBatch, StoryWriting
 from tests.fake_anthropic import FakeAnthropic, as_client, rate_limited, reply
 
 PRICING = Pricing.load(Path(__file__).resolve().parents[1] / "config" / "pricing.yaml")
+PRICES = PriceBook(PRICING)
 MODEL = "claude-haiku-5-5"
+
+
+def writer_for(
+    fake: FakeAnthropic, *, briefing_model: str = MODEL, batch_size: int = 10
+) -> LLMWriter:
+    """The production wiring: low effort for stories, medium effort for the briefing."""
+    client = as_client(fake)
+    return LLMWriter(
+        AnthropicClient(client, MODEL, PRICES),
+        AnthropicClient(client, briefing_model, PRICES, effort="medium"),
+        batch_size=batch_size,
+    )
 
 
 def wi(story_id: int, *, include_why: bool = True, texts: list[str] | None = None) -> WriteInput:
@@ -47,7 +62,7 @@ def bs(story_id: int, url: str, category: Category = Category.RESEARCH) -> Brief
 
 async def test_write_stories_request_shape() -> None:
     fake = FakeAnthropic([reply(StoryBatch(stories=[sw(7)]))])
-    writer = HaikuWriter(as_client(fake), MODEL, PRICING)
+    writer = writer_for(fake)
     texts, usage = await writer.write_stories([wi(7, texts=["a", "b", "c"])])
     call = fake.messages.calls[0]
     assert call["output_format"] is StoryBatch
@@ -67,9 +82,7 @@ async def test_write_stories_request_shape() -> None:
 
 async def test_include_why_false_forces_none() -> None:
     fake = FakeAnthropic([reply(StoryBatch(stories=[sw(1, why="Should be dropped.")]))])
-    texts, _ = await HaikuWriter(as_client(fake), MODEL, PRICING).write_stories(
-        [wi(1, include_why=False)]
-    )
+    texts, _ = await writer_for(fake).write_stories([wi(1, include_why=False)])
     assert texts[0].why_it_matters is None
 
 
@@ -77,9 +90,7 @@ async def test_batches_of_ten_and_bad_entries_dropped() -> None:
     first = StoryBatch(stories=[sw(i) for i in range(1, 11)] + [sw(99), sw(1, "duplicate")])
     second = StoryBatch(stories=[sw(11, summary="   "), sw(12)])
     fake = FakeAnthropic([reply(first), reply(second)])
-    texts, usage = await HaikuWriter(as_client(fake), MODEL, PRICING).write_stories(
-        [wi(i) for i in range(1, 13)]
-    )
+    texts, usage = await writer_for(fake).write_stories([wi(i) for i in range(1, 13)])
     assert len(fake.messages.calls) == 2
     assert [t.story_id for t in texts] == [*range(1, 11), 12]
     assert texts[0].summary == "It happened."
@@ -90,7 +101,7 @@ async def test_refusal_and_errors_never_raise() -> None:
     fake = FakeAnthropic(
         [reply(StoryBatch(stories=[sw(1)]), stop_reason="refusal"), rate_limited()]
     )
-    writer = HaikuWriter(as_client(fake), MODEL, PRICING, batch_size=1)
+    writer = writer_for(fake, batch_size=1)
     texts, usage = await writer.write_stories([wi(1), wi(2)])
     assert texts == []
     assert len(usage) == 1
@@ -102,13 +113,15 @@ async def test_write_briefing_uses_briefing_model_and_cleans_links() -> None:
         "[A result](https://example.com/a) and [a fake](https://evil.example/x)."
     )
     fake = FakeAnthropic([reply(BriefingDoc(body=body))])
-    writer = HaikuWriter(as_client(fake), MODEL, PRICING, briefing_model="claude-sonnet-5-5")
+    writer = writer_for(fake, briefing_model="claude-sonnet-5-5")
     text, usage = await writer.write_briefing(
         [bs(1, "https://example.com/a")], "Wednesday 14 October 2026"
     )
     call = fake.messages.calls[0]
     assert call["model"] == "claude-sonnet-5-5"
     assert call["output_format"] is BriefingDoc
+    assert call["output_config"] == {"effort": "medium"}
+    assert call["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert call["system"][0]["text"] == BRIEFING_SYSTEM
     assert "Wednesday 14 October 2026" in call["messages"][0]["content"]
     assert text is not None
@@ -119,7 +132,7 @@ async def test_write_briefing_uses_briefing_model_and_cleans_links() -> None:
 
 async def test_write_briefing_failures_return_none() -> None:
     fake = FakeAnthropic([reply(None, stop_reason="max_tokens"), rate_limited()])
-    writer = HaikuWriter(as_client(fake), MODEL, PRICING)
+    writer = writer_for(fake)
     stories = [bs(1, "https://example.com/a")]
     assert (await writer.write_briefing(stories, "x"))[0] is None
     assert await writer.write_briefing(stories, "x") == (None, [])
@@ -127,9 +140,7 @@ async def test_write_briefing_failures_return_none() -> None:
 
 
 def test_worst_case_costs() -> None:
-    writer = HaikuWriter(
-        as_client(FakeAnthropic([])), MODEL, PRICING, briefing_model="claude-sonnet-5-5"
-    )
+    writer = writer_for(FakeAnthropic([]), briefing_model="claude-sonnet-5-5")
     assert writer.worst_case_cost_stories([wi(1)]) > PRICING.cost(MODEL, 0, 4000)
     assert writer.worst_case_cost_stories([]) == 0.0
     assert writer.worst_case_cost_briefing([bs(1, "https://example.com/a")]) > PRICING.cost(
@@ -140,7 +151,7 @@ def test_worst_case_costs() -> None:
 def test_worst_case_stories_is_an_absolute_upper_bound() -> None:
     # Haiku: $0.10/Mtok in (cache write 1.25x = $0.125), $0.50/Mtok out, max_tokens 4000.
     # Multi-byte text proves input is counted in UTF-8 bytes, not characters.
-    writer = HaikuWriter(as_client(FakeAnthropic([])), MODEL, PRICING)
+    writer = writer_for(FakeAnthropic([]))
     batch = [wi(1, texts=["é" * 500])]
     sent = WRITER_SYSTEM + '<story id="1">' + "é" * 500  # a lower bound on what is sent
     min_bytes = len(sent.encode("utf-8")) + SCHEMA_OVERHEAD_TOKENS
@@ -149,7 +160,7 @@ def test_worst_case_stories_is_an_absolute_upper_bound() -> None:
     assert got >= floor
     assert got == pytest.approx(floor, abs=1e-3)  # and not wildly above it
     # two batches of one story each cost twice one batch
-    two = HaikuWriter(as_client(FakeAnthropic([])), MODEL, PRICING, batch_size=1)
+    two = writer_for(FakeAnthropic([]), batch_size=1)
     assert two.worst_case_cost_stories([wi(1), wi(2)]) == pytest.approx(
         2 * two.worst_case_cost_stories([wi(1)]), rel=0.01
     )
@@ -157,9 +168,7 @@ def test_worst_case_stories_is_an_absolute_upper_bound() -> None:
 
 def test_worst_case_briefing_is_an_absolute_upper_bound() -> None:
     # Sonnet: $2.00/Mtok in (cache write 1.25x = $2.50), $10.00/Mtok out, max_tokens 4000.
-    writer = HaikuWriter(
-        as_client(FakeAnthropic([])), MODEL, PRICING, briefing_model="claude-sonnet-5-5"
-    )
+    writer = writer_for(FakeAnthropic([]), briefing_model="claude-sonnet-5-5")
     stories = [bs(1, "https://example.com/é")]
     sent = BRIEFING_SYSTEM + render_briefing_request(stories, "Wednesday 14 October 2026")
     min_bytes = len(sent.encode("utf-8")) + SCHEMA_OVERHEAD_TOKENS

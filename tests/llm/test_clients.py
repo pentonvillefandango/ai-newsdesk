@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from ai_newsdesk.budget import Budget
 from ai_newsdesk.clock import FixedClock
 from ai_newsdesk.consolidate import StoryGroups
-from ai_newsdesk.judges.haiku import BatchJudgement
+from ai_newsdesk.judges.llm import BatchJudgement
 from ai_newsdesk.llm import (
     SCHEMA_OVERHEAD_TOKENS,
     AnthropicClient,
