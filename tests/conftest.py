@@ -1,6 +1,6 @@
 """Shared pytest fixtures."""
 
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import datetime
 from pathlib import Path
 
@@ -8,6 +8,7 @@ import pytest
 
 from ai_newsdesk.clock import FixedClock
 from ai_newsdesk.config import Settings, get_settings
+from ai_newsdesk.store.store import Store
 from tests.fakes import utc
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -62,3 +63,14 @@ def now() -> datetime:
 @pytest.fixture
 def clock() -> FixedClock:
     return FixedClock(TEST_NOW)
+
+
+@pytest.fixture
+async def store(db_path: str, clock: FixedClock) -> AsyncIterator[Store]:
+    """A migrated Store on a fresh file, using the shared FixedClock."""
+    s = Store(db_path, clock=clock)
+    await s.init()
+    try:
+        yield s
+    finally:
+        await s.close()
