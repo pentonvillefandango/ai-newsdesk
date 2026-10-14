@@ -210,3 +210,12 @@ async def test_http_fetcher_raises_on_an_error_status() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         with pytest.raises(httpx.HTTPStatusError):
             await http_fetcher(http)()
+
+
+@pytest.mark.parametrize("suffix", [":batch", ":free", ":beta", ":extended", ":thinking", ":nitro"])
+def test_variant_ids_are_dropped(suffix: str) -> None:
+    """OpenRouter lists variants (e.g. anthropic/claude-haiku-5.5:batch) beside the base id;
+    they route and bill differently, so only the base id is usable."""
+    base = next(m for m in FIXTURE["data"] if m["id"] == "anthropic/claude-haiku-5.5")
+    variant = {**base, "id": base["id"] + suffix}
+    assert [m.id for m in filter_models({"data": [base, variant]})] == [base["id"]]

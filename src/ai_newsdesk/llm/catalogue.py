@@ -1,8 +1,9 @@
 """The OpenRouter model catalogue (spec 3.2): which models are usable and what they cost.
 
 The public models list (no key) is filtered to models with a positive numeric price, structured
-output and text input, minus `:free` ids, and stored in the settings table under
-`model_catalogue`. A failed refresh never replaces the last good copy.
+output and text input, minus variant ids (`:free`, `:batch` and any other `:` suffix), and
+stored in the settings table under `model_catalogue`. A failed refresh never replaces the last
+good copy.
 """
 
 from __future__ import annotations
@@ -74,7 +75,9 @@ def _entry(raw: object) -> CatalogueModel | None:
     if not isinstance(raw, dict):
         return None
     model_id = raw.get("id")
-    if not isinstance(model_id, str) or not model_id or model_id.endswith(":free"):
+    # A ":" suffix marks a variant (:free, :batch, :beta, :extended...) that routes and bills
+    # differently from its base id; only base ids are usable.
+    if not isinstance(model_id, str) or not model_id or ":" in model_id:
         return None
     params = raw.get("supported_parameters")
     # We always send response_format and max_tokens, and OpenRouter calls set

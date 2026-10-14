@@ -306,9 +306,12 @@ class Provider:
     def __init__(self, reply: httpx.Response | None = None) -> None:
         self.reply = reply
         self.requests: list[httpx.Request] = []
+        self.on_request: Any = None  # called with each request, before the reply
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
+        if self.on_request is not None:
+            self.on_request(request)
         if self.reply is not None:
             return self.reply
         body = completion(
@@ -585,3 +588,70 @@ def test_new_key_rows_are_tested_and_write_only(
     assert run(client, app.state.api_keys.resolve_api_key, name) == key
     for path in ("/settings", "/settings?saved=key", "/"):
         assert key not in client.get(path).text, path
+
+
+def test_a_refused_test_never_logs_the_typed_model(
+    tclient: TestClient, provider: Provider, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Review M1: a key pasted into the wrong box must not reach the log."""
+    pasted = "sk-or-" + "p" * 40
+    form = _test_form(tclient, "writer", writer_provider="openrouter", writer_model_other=pasted)
+    with caplog.at_level("INFO"):
+        r = _post(tclient, "/settings/models/test", form, headers=HX)
+    assert "Not tested" in r.text
+    assert pasted not in caplog.text
+    assert "model test for writer: refused" in caplog.text
+    assert provider.requests == []
+
+
+def test_a_test_is_refused_while_a_run_holds_the_lock(
+    tapp: FastAPI, tclient: TestClient, provider: Provider
+) -> None:
+    """Review M3: the budget cap stays hard; a test never races a run."""
+    _save_keys(tclient)
+    lock: asyncio.Lock = tapp.state.run_lock
+    form = _test_form(
+        tclient,
+        "writer",
+        writer_provider="openrouter",
+        writer_model="google/gemini-3.8-flash",
+        writer_model_other="",
+    )
+    run(tclient, lock.acquire)
+    try:
+        r = _post(tclient, "/settings/models/test", form, headers=HX)
+    finally:
+        run(tclient, _release, lock)
+    assert "A run is in progress; try again when it finishes." in r.text
+    assert provider.requests == []
+    r = _post(tclient, "/settings/models/test", form, headers=HX)
+    assert "It works." in r.text and len(provider.requests) == 1
+
+
+def test_a_test_holds_the_run_lock_while_it_calls(
+    tapp: FastAPI, tclient: TestClient, provider: Provider
+) -> None:
+    _save_keys(tclient)
+    seen: list[bool] = []
+    provider.on_request = lambda request: seen.append(tapp.state.run_lock.locked())
+    form = _test_form(
+        tclient,
+        "writer",
+        writer_provider="openrouter",
+        writer_model="google/gemini-3.8-flash",
+        writer_model_other="",
+    )
+    assert "It works." in _post(tclient, "/settings/models/test", form, headers=HX).text
+    assert seen == [True]
+    assert not tapp.state.run_lock.locked()
+
+
+def test_a_no_js_result_is_shown_once(tclient: TestClient) -> None:
+    form = _test_form(tclient, "writer", writer_provider="openai", writer_model_other="")
+    r = _post(tclient, "/settings/models/test", form)
+    assert "Not tested." in tclient.get(r.headers["location"]).text
+    assert "Not tested." not in tclient.get(r.headers["location"]).text
+
+
+async def _release(lock: asyncio.Lock) -> None:
+    lock.release()

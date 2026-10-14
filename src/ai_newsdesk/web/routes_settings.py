@@ -64,6 +64,7 @@ MODEL_LIST = {
         " config/pricing.yaml can be used."
     ),
 }
+RUN_BUSY = "A run is in progress; try again when it finishes."
 RUN = {
     "started": "Run started. New stories appear on Today when it finishes.",
     "busy": "A run is already going. Try again when it has finished.",
@@ -162,7 +163,8 @@ async def _render(
             "datalists": datalists(app.state.prices, catalogue),
             "judge_warning": JUDGE_WARNING if judge_warning(form) else None,
             "catalogue_at": catalogue.fetched_at if catalogue is not None else None,
-            "model_tests": {tested: model_tests[tested]} if tested in model_tests else {},
+            # Shown once: a bookmarked ?tested= link never brings an old result back.
+            "model_tests": {tested: model_tests.pop(tested)} if tested in model_tests else {},
             "model_list_flash": MODEL_LIST.get(request.query_params.get("models", "")),
             "price_text": price_text,
             "provider_names": PROVIDER_NAMES,
@@ -281,34 +283,37 @@ async def test_model(request: Request) -> Response:
     if job not in JOB_NAMES:
         raise HTTPException(status_code=404, detail="There is no such job.")
     app: FastAPI = request.app
-    store = store_of(request)
-    runtime = await load_runtime_settings(store)
-    budget = Budget(
-        store,
-        app.state.pricing,
-        app.state.deps.clock,
-        runtime,
-        tz=app.state.settings.tz,
-        prices=app.state.prices,
-    )
-    await budget.refresh()
-    result = await run_model_test(
-        job,
-        form.get(f"{job}_provider", ""),
-        effective_model(form, job),
-        client_for=app.state.model_client,
-        prices=app.state.prices,
-        catalogue=app.state.catalogue.current,
-        keys=await api_keys_of(request).available(),
-        budget=budget,
-    )
-    log.info(
-        "model test for %s: %s:%s %s",
-        job,
-        result.provider,
-        result.model,
-        "ok" if result.ok else ("failed" if result.called else "refused"),
-    )
+    provider, model = form.get(f"{job}_provider", ""), effective_model(form, job)
+    lock: asyncio.Lock = app.state.run_lock
+    if lock.locked():  # a run's Budget would not see the test's spend: never race it
+        result = ModelTestResult(job, provider, model, ok=False, called=False, message=RUN_BUSY)
+    else:
+        async with lock:
+            store = store_of(request)
+            budget = Budget(
+                store,
+                app.state.pricing,
+                app.state.deps.clock,
+                await load_runtime_settings(store),
+                tz=app.state.settings.tz,
+                prices=app.state.prices,
+            )
+            await budget.refresh()
+            result = await run_model_test(
+                job,
+                provider,
+                model,
+                client_for=app.state.model_client,
+                prices=app.state.prices,
+                catalogue=app.state.catalogue.current,
+                keys=await api_keys_of(request).available(),
+                budget=budget,
+            )
+    if result.called:  # validated by now: a known catalogue or pricing.yaml id
+        outcome = "ok" if result.ok else "failed"
+        log.info("model test for %s: %s:%s %s", job, result.provider, result.model, outcome)
+    else:  # the typed id may be anything, even a pasted key: never log it
+        log.info("model test for %s: refused", job)
     if is_htmx(request):
         return partial(
             request,

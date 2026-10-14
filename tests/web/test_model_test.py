@@ -15,6 +15,8 @@ from ai_newsdesk.llm.prices import Price, PriceBook
 from ai_newsdesk.models import Purpose, Usage
 from ai_newsdesk.web.model_test import (
     TEST_MAX_TOKENS,
+    TEST_SYSTEM,
+    TEST_USER,
     ConnectionCheck,
     ModelTestResult,
     run_model_test,
@@ -131,6 +133,31 @@ async def test_refused_when_the_budget_cannot_cover_it() -> None:
     assert not result.ok and not result.called
     assert "budget" in result.message
     assert fake.calls == [] and budget.recorded == []
+
+
+async def test_the_budget_is_checked_against_the_clients_worst_case() -> None:
+    """Remaining just under the client's worst case for TEST_MAX_TOKENS refuses; exactly the
+    worst case is enough."""
+    probe = FakeModelClient([])
+    worst = probe.worst_case_usd(system=TEST_SYSTEM, user=TEST_USER, max_tokens=TEST_MAX_TOKENS)
+    assert worst > 0
+    fake = FakeModelClient([ConnectionCheck(ok=True)])
+    short = FakeBudget(remaining=worst - 1e-9)
+    result = await _test("openrouter", "google/gemini-3.8-flash", Clients(fake), short)
+    assert not result.called and "budget" in result.message
+    assert short.asked == [pytest.approx(worst)] and fake.calls == []
+    enough = FakeBudget(remaining=worst)
+    result = await _test("openrouter", "google/gemini-3.8-flash", Clients(fake), enough)
+    assert result.ok and enough.asked == [pytest.approx(worst)]
+    assert len(fake.calls) == 1
+
+
+async def test_only_the_chosen_providers_key_is_needed() -> None:
+    fake = FakeModelClient([ConnectionCheck(ok=True)])
+    result = await _test(
+        "openrouter", "google/gemini-3.8-flash", Clients(fake), keys={"openrouter"}
+    )
+    assert result.ok and result.called
 
 
 async def test_an_unusable_client_is_refused() -> None:
