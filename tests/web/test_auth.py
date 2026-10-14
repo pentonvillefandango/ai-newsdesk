@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
@@ -225,3 +227,64 @@ def test_security_headers(client: TestClient) -> None:
     assert r.headers["x-frame-options"] == "DENY"
     assert r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["cache-control"] == "no-store"
+
+
+def test_cookies_use_host_prefix_without_domain(client: TestClient) -> None:
+    assert SESSION_COOKIE == "__Host-nd_session"
+    assert CSRF_COOKIE == "__Host-nd_csrf"
+    r1 = client.get("/login")
+    r2 = client.post(
+        "/login",
+        data={"password": TEST_PASSWORD, "csrf_token": csrf_token(client)},
+        follow_redirects=False,
+    )
+    for resp, name in ((r1, CSRF_COOKIE), (r2, SESSION_COOKIE)):
+        cookie = next(v for v in resp.headers.get_list("set-cookie") if v.startswith(f"{name}="))
+        lowered = cookie.lower()
+        assert "path=/" in lowered
+        assert "secure" in lowered
+        assert "domain" not in lowered
+    out = client.post("/logout", data={"csrf_token": csrf_token(client)}, follow_redirects=False)
+    gone = next(v for v in out.headers.get_list("set-cookie") if v.startswith(f"{SESSION_COOKIE}="))
+    assert "domain" not in gone.lower()
+    assert "path=/" in gone.lower()
+
+
+async def test_concurrent_guesses_cannot_bypass_the_limiter(tmp_path: Path) -> None:
+    app = _app(make_settings(tmp_path))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as c:
+        await c.get("/login")
+        token = c.cookies.get(CSRF_COOKIE)
+        assert token
+        results = await asyncio.gather(
+            *[c.post("/login", data={"password": "nope", "csrf_token": token}) for _ in range(30)]
+        )
+    codes = [r.status_code for r in results]
+    assert codes.count(401) <= 5
+    assert codes.count(429) >= 25
+
+
+async def test_password_verifies_are_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = {"now": 0, "max": 0}
+
+    async def slow_verify(stored_hash: str, password: str) -> bool:
+        state["now"] += 1
+        state["max"] = max(state["max"], state["now"])
+        await asyncio.sleep(0.02)
+        state["now"] -= 1
+        return False
+
+    monkeypatch.setattr("ai_newsdesk.web.routes_auth.verify_password", slow_verify)
+    app = _app(make_settings(tmp_path))
+    app.state.login_limiter = LoginRateLimiter(max_failures=100)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as c:
+        await c.get("/login")
+        token = c.cookies.get(CSRF_COOKIE)
+        await asyncio.gather(
+            *[c.post("/login", data={"password": "x", "csrf_token": token}) for _ in range(10)]
+        )
+    assert state["max"] == 2

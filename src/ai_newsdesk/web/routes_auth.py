@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from typing import Annotated
 
@@ -74,8 +75,11 @@ async def login(
         )
         response.headers["Retry-After"] = str(wait_s)
         return response
-    if not await verify_password(stored_hash, password):
-        limiter.fail(client)
+    limiter.begin(client)  # no await since blocked(): in-flight guesses count at once
+    semaphore: asyncio.Semaphore = request.app.state.verify_semaphore
+    async with semaphore:
+        ok = await verify_password(stored_hash, password)
+    if not ok:
         return _login_page(request, target, "Wrong password. Try again.", 401)
     limiter.reset(client)
     codec: SessionCodec = request.app.state.session_codec

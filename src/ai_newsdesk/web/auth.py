@@ -17,7 +17,9 @@ from starlette.requests import HTTPConnection
 from starlette.responses import PlainTextResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-SESSION_COOKIE = "nd_session"
+# __Host- prefix: browsers only accept it with Secure, Path=/ and no Domain, so sibling
+# subdomains cannot plant these cookies for the parent domain.
+SESSION_COOKIE = "__Host-nd_session"
 SESSION_MAX_AGE_S = 14 * 24 * 3600
 _SALT = "ai-newsdesk-session"
 OPEN_PATHS = frozenset({"/login", "/health"})
@@ -114,6 +116,13 @@ class LoginRateLimiter:
         if q is None or len(q) < self._max:
             return 0
         return max(1, math.ceil(q[0] + self._window - self._clock()))
+
+    def begin(self, client: str) -> None:
+        """Reserve a failure slot before verifying, so in-flight attempts count.
+
+        Call ``reset`` on success.
+        """
+        self.fail(client)
 
     def fail(self, client: str) -> None:
         if self.blocked(client):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import FastAPI
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -55,6 +57,7 @@ def install_security(app: FastAPI, settings: Settings) -> None:
     """
     app.state.session_codec = SessionCodec(settings.session_secret, settings.owner_password_hash)
     app.state.login_limiter = LoginRateLimiter()
+    app.state.verify_semaphore = asyncio.Semaphore(2)  # argon2 uses ~64 MiB per verify
     app.add_middleware(AuthMiddleware, codec=app.state.session_codec)
     app.add_middleware(CSRFCookieMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)

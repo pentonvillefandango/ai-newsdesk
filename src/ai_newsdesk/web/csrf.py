@@ -14,7 +14,7 @@ from fastapi import HTTPException, Request
 from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-CSRF_COOKIE = "nd_csrf"
+CSRF_COOKIE = "__Host-nd_csrf"
 CSRF_HEADER = "x-csrf-token"
 CSRF_FIELD = "csrf_token"
 CSRF_MAX_AGE_S = 14 * 24 * 3600
