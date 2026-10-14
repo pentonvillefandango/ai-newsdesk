@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -35,12 +36,36 @@ def prompt_tokens(system: str, user: str) -> int:
 def describe_error(exc: BaseException) -> str:
     """A log-safe description of a failed model call (never the request, the body or the key)."""
     if isinstance(exc, anthropic.RateLimitError | openai.RateLimitError):
-        return "rate limited (429) after SDK retries"
+        return "rate limited (429)"
     if isinstance(exc, anthropic.APIStatusError | openai.APIStatusError):
         return f"HTTP {exc.status_code} ({type(exc).__name__})"
     if isinstance(exc, anthropic.APIConnectionError | openai.APIConnectionError):
         return f"connection error ({type(exc).__name__})"
     return type(exc).__name__
+
+
+def abandoned_usage(provider: str, model: str, purpose: Purpose, worst_case_usd: float) -> Usage:
+    """The spend row for a call that may have been billed with no usage known (we abandoned it,
+    or it failed after the request may have reached the provider): it costs its worst case."""
+    return Usage(
+        provider=provider,
+        model=model,
+        purpose=purpose,
+        input_tokens=0,
+        reported_cost_usd=worst_case_usd,
+    )
+
+
+def may_be_billed(exc: BaseException) -> bool:
+    """False only when the provider certainly charged nothing: it answered with a 4xx (bad key,
+    bad request, rate limit) other than 408, or a 529 (overloaded: the request was not run).
+    A timeout, a dropped connection, another 5xx or anything unexpected may have been billed,
+    so it counts."""
+    if isinstance(exc, anthropic.APIStatusError | openai.APIStatusError):
+        if exc.status_code == 529:  # overloaded: rejected, never run
+            return False
+        return exc.status_code >= 500 or exc.status_code == 408
+    return True
 
 
 @dataclass(frozen=True)
@@ -63,3 +88,18 @@ class ModelClient(Protocol):
     ) -> StructuredResult[T]: ...
 
     def worst_case_usd(self, *, system: str, user: str, max_tokens: int) -> float: ...
+
+
+def failed_call[T: BaseModel](
+    exc: BaseException, provider: str, model: str, purpose: Purpose, worst_case: Callable[[], float]
+) -> StructuredResult[T]:
+    """A client's result for a call that raised: scrubbed, and charged its worst case once when
+    it may have been billed (the meter can over-count but never under-count). A model with no
+    price could never have passed the budget pre-check, so it is never charged here."""
+    usage: Usage | None = None
+    if may_be_billed(exc):
+        try:
+            usage = abandoned_usage(provider, model, purpose, worst_case())
+        except KeyError:  # pricing.UnknownModelError
+            usage = None
+    return StructuredResult(usage=usage, error=describe_error(exc))

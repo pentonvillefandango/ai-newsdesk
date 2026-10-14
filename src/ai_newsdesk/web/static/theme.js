@@ -1,33 +1,36 @@
-/* Theme toggle: Auto (follow the device), Light or Dark, remembered per browser.
-   Loaded synchronously in <head> so the forced theme is set before the first paint.
-   No markup is ever written from script; storage may be unavailable, so every access is guarded. */
+/* Theme toggle (Auto, Light or Dark) and accent colour, each remembered per browser.
+   Loaded synchronously in <head> so the forced theme and the accent are set before the first
+   paint. No markup is ever written from script; storage may be unavailable, so every access is
+   guarded. */
 (function () {
   "use strict";
 
-  var KEY = "newsdesk-theme";
-  var CHOICES = ["auto", "light", "dark"];
+  var THEME_KEY = "newsdesk-theme";
+  var THEMES = ["auto", "light", "dark"];
+  var ACCENT_KEY = "newsdesk-accent";
+  var ACCENTS = ["amber", "blue", "green", "violet", "rose", "teal"];
   var root = document.documentElement;
 
-  function load() {
+  function load(key, choices) {
     var value = null;
     try {
-      value = window.localStorage.getItem(KEY);
+      value = window.localStorage.getItem(key);
     } catch (e) {
       value = null;
     }
-    return CHOICES.indexOf(value) === -1 ? "auto" : value;
+    return choices.indexOf(value) === -1 ? choices[0] : value;
   }
 
-  function save(choice) {
+  function save(key, choice, fallback) {
     try {
-      if (choice === "auto") window.localStorage.removeItem(KEY);
-      else window.localStorage.setItem(KEY, choice);
+      if (choice === fallback) window.localStorage.removeItem(key);
+      else window.localStorage.setItem(key, choice);
     } catch (e) {
       /* private mode or blocked storage: the choice lasts for this page only */
     }
   }
 
-  function apply(choice) {
+  function applyTheme(choice) {
     if (choice === "auto") {
       delete root.dataset.theme;
     } else {
@@ -35,31 +38,119 @@
     }
   }
 
-  var current = load();
-  apply(current);
-  root.dataset.themeReady = "";  // reveals the control (it does nothing without this script)
+  function applyAccent(choice) {
+    root.dataset.accent = choice;
+  }
 
-  document.addEventListener("DOMContentLoaded", function () {
+  var theme = load(THEME_KEY, THEMES);
+  var accent = load(ACCENT_KEY, ACCENTS);
+  applyTheme(theme);
+  applyAccent(accent);
+  root.dataset.themeReady = "";  // reveals the controls (they do nothing without this script)
+
+  function pressed(buttons, attr, current) {
+    buttons.forEach(function (button) {
+      button.setAttribute("aria-pressed", String(button.getAttribute(attr) === current));
+    });
+  }
+
+  function setUpTheme() {
     var buttons = Array.prototype.slice.call(document.querySelectorAll("[data-theme-choice]"));
-
-    function sync() {
-      buttons.forEach(function (button) {
-        button.setAttribute("aria-pressed", String(button.dataset.themeChoice === current));
-      });
-    }
-
     buttons.forEach(function (button) {
       button.addEventListener("click", function () {
         var choice = button.dataset.themeChoice;
-        if (CHOICES.indexOf(choice) === -1) {
+        if (THEMES.indexOf(choice) === -1) {
           return;
         }
-        current = choice;
-        save(choice);
-        apply(choice);
-        sync();
+        theme = choice;
+        save(THEME_KEY, choice, "auto");
+        applyTheme(choice);
+        pressed(buttons, "data-theme-choice", theme);
       });
     });
+    pressed(buttons, "data-theme-choice", theme);
+  }
+
+  /* The accent control: a button that opens a small menu of six swatches. Escape or a click
+     outside closes it; arrow keys move between swatches. */
+  function setUpAccent() {
+    var toggle = document.querySelector("[data-accent-toggle]");
+    var menu = document.getElementById("accent-menu");
+    if (!toggle || !menu) {
+      return;
+    }
+    var buttons = Array.prototype.slice.call(menu.querySelectorAll("[data-accent-choice]"));
+
+    /* Pressed states, and the toggle's name with the accent in use ("Accent colour: Rose"). */
+    function sync() {
+      pressed(buttons, "data-accent-choice", accent);
+      var name = accent.charAt(0).toUpperCase() + accent.slice(1);
+      toggle.setAttribute("aria-label", "Accent colour: " + name);
+    }
+
+    function open() {
+      menu.hidden = false;
+      toggle.setAttribute("aria-expanded", "true");
+      var chosen = buttons.filter(function (b) { return b.dataset.accentChoice === accent; });
+      (chosen[0] || buttons[0]).focus();
+    }
+
+    function close(refocus) {
+      if (menu.hidden) {
+        return;
+      }
+      menu.hidden = true;
+      toggle.setAttribute("aria-expanded", "false");
+      if (refocus) toggle.focus();
+    }
+
+    toggle.addEventListener("click", function () {
+      if (menu.hidden) open();
+      else close(true);
+    });
+
+    buttons.forEach(function (button, i) {
+      button.addEventListener("click", function () {
+        var choice = button.dataset.accentChoice;
+        if (ACCENTS.indexOf(choice) === -1) {
+          return;
+        }
+        accent = choice;
+        save(ACCENT_KEY, choice, "amber");
+        applyAccent(choice);
+        sync();
+        close(true);
+      });
+      button.addEventListener("keydown", function (event) {
+        var step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+        if (step) {
+          event.preventDefault();
+          buttons[(i + step + buttons.length) % buttons.length].focus();
+        }
+      });
+    });
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") close(true);
+    });
+    /* Tabbing out of the menu closes it. A click gives no relatedTarget in some browsers, so
+       only a known new focus outside counts; clicks outside are handled below. */
+    [menu, toggle].forEach(function (el) {
+      el.addEventListener("focusout", function (event) {
+        var next = event.relatedTarget;
+        if (next && !menu.contains(next) && !toggle.contains(next)) close(false);
+      });
+    });
+    document.addEventListener("click", function (event) {
+      if (!menu.hidden && !menu.contains(event.target) && !toggle.contains(event.target)) {
+        close(false);
+      }
+    });
     sync();
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    setUpTheme();
+    setUpAccent();
   });
 })();

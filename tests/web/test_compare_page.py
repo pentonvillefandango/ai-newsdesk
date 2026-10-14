@@ -221,12 +221,12 @@ def _verdict(item_id: int, signal: int, junk: bool = False) -> dict[str, Any]:
 # ---- the page and its setup form ----------------------------------------------------------
 
 
-def test_compare_is_in_the_nav_after_settings(cclient: TestClient) -> None:
+def test_compare_is_in_the_nav_after_settings_and_models(cclient: TestClient) -> None:
     page = cclient.get("/compare").text
     nav = re.search(r'<nav class="nav".*?</nav>', page, re.S)
     assert nav is not None
     links = re.findall(r'href="(/[a-z]*)"', nav.group(0))
-    assert links[-2:] == ["/settings", "/compare"]
+    assert links[-3:] == ["/settings", "/models", "/compare"]
     assert '<a href="/compare" aria-current="page">Compare</a>' in page
 
 
@@ -241,7 +241,7 @@ def test_the_setup_form_reuses_the_settings_model_controls(cclient: TestClient) 
     assert 'name="job"' in page and 'value="judge"' in page and 'value="writer"' in page
     assert 'name="cap_usd"' in page and 'value="0.25"' in page
     assert 'name="sample_size"' in page
-    assert "/static/settings.js" in page
+    assert "/static/models.js" in page
     # Run waits for a cost check
     assert re.search(r"<button[^>]*formaction=\"/compare/run\"[^>]*disabled", page)
 
@@ -617,6 +617,7 @@ def test_use_this_model_sets_the_judge_and_rebuilds(capp: FastAPI, cclient: Test
     assert capp.state.ctx is not before
     page = cclient.get(r.headers["location"]).text
     assert "is now the judge" in page
+    assert '<a href="/models#model-judge">See it on Models</a>' in page
     assert JUDGE_WARNING.replace("'", "&#39;") in page
 
 

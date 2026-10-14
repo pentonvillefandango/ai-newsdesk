@@ -3,7 +3,8 @@
 Failures are local: a source, an item or an AI batch that fails is recorded and the run carries
 on. After clustering, `consolidate.consolidate` merges open stories that report the same event
 (one Claude call), before the writer runs. Every AI call is preceded by a budget pre-check using
-that call's worst-case cost. Nothing is retried within a run: an item the judge fails on is
+that call's worst-case cost; a call cut off by shutdown may still be billed, so it is recorded at
+that worst case. Nothing is retried within a run: an item the judge fails on is
 marked `review_failed` (and shown), and `Store.queued_review_inputs` offers it again on the next
 run, up to MAX_REVIEW_ATTEMPTS; a story the writer leaves out is counted with
 `Store.mark_text_failed` and offered again the same way. An item deleted mid-run (its source
@@ -24,12 +25,13 @@ from ai_newsdesk import cluster, prefilter
 from ai_newsdesk.briefing import briefing_date_label
 from ai_newsdesk.budget import Budget
 from ai_newsdesk.config import Settings
-from ai_newsdesk.consolidate import consolidate
+from ai_newsdesk.consolidate import ConsolidationResult, consolidate
 from ai_newsdesk.dedupe import DEDUPE_WINDOW_HOURS, find_story_link
 from ai_newsdesk.enrich import enrich_bodies
 from ai_newsdesk.models import (
     Candidate,
     ItemStatus,
+    Purpose,
     ReviewInput,
     SourceConfig,
     SourceKind,
@@ -110,13 +112,16 @@ def with_runtime_defaults(src: SourceConfig, rs: RuntimeSettings) -> SourceConfi
     return src
 
 
-def _affordable[T](budget: Budget, estimate: Callable[[list[T]], float], items: list[T]) -> bool:
+def _affordable[T](
+    budget: Budget, estimate: Callable[[list[T]], float], items: list[T]
+) -> float | None:
+    """The call's worst case when the budget covers it, else None (the call is not sent)."""
     try:
         worst = estimate(items)
     except Exception:  # an estimate we cannot make is a call we do not send
         log.exception("worst-case cost estimate failed; call skipped")
-        return False
-    return budget.can_afford(worst)
+        return None
+    return worst if budget.can_afford(worst) else None
 
 
 async def _collect_one(adapter: Source | None, src: SourceConfig, since: datetime) -> SourceResult:
@@ -268,11 +273,17 @@ async def _judge_all(
     """Judge in batches; returns the inputs never sent because the budget ran out."""
     for start in range(0, len(inputs), REVIEW_BATCH):
         batch = inputs[start : start + REVIEW_BATCH]
-        if not _affordable(ctx.budget, ctx.judge.worst_case_cost, batch):
+        worst = _affordable(ctx.budget, ctx.judge.worst_case_cost, batch)
+        if worst is None:
             log.warning("monthly budget reached: %d items stay queued", len(inputs) - start)
             return inputs[start:]
         try:
             result = await ctx.judge.review(batch)
+        except asyncio.CancelledError:  # shutdown mid-call: it may still be billed
+            report.cost_usd += await ctx.budget.record_abandoned(
+                ctx.judge.provider, ctx.judge.model, Purpose.REVIEW, worst
+            )
+            raise
         except Exception:  # Judge.review should never raise; be safe anyway
             log.exception("judge raised; batch counted as failed")
             failed.extend(batch)
@@ -345,8 +356,11 @@ async def _consolidate(ctx: PipelineContext, now: datetime, report: RunReport) -
     """Merge open stories that report the same event, so the writer sees each event once."""
     if ctx.consolidator is None:
         return
-    result = await consolidate(ctx.store, ctx.consolidator, ctx.budget, now)
-    report.cost_usd += result.cost_usd
+    result = ConsolidationResult()
+    try:
+        await consolidate(ctx.store, ctx.consolidator, ctx.budget, now, into=result)
+    finally:  # a call cut off by shutdown counts in the run's cost too
+        report.cost_usd += result.cost_usd
     report.counts["stories_merged"] = result.merged
     report.counts["consolidate_skipped"] = int(result.skipped)
 
@@ -355,11 +369,17 @@ async def _write(ctx: PipelineContext, rs: RuntimeSettings, report: RunReport) -
     inputs = await ctx.store.stories_needing_text(WRITE_LIMIT, rs.why_it_matters)
     for start in range(0, len(inputs), WRITE_BATCH):
         batch = inputs[start : start + WRITE_BATCH]
-        if not _affordable(ctx.budget, ctx.writer.worst_case_cost_stories, batch):
+        worst = _affordable(ctx.budget, ctx.writer.worst_case_cost_stories, batch)
+        if worst is None:
             log.warning("monthly budget reached: %d stories left unsummarised", len(inputs) - start)
             return
         try:
             texts, usage = await ctx.writer.write_stories(batch)
+        except asyncio.CancelledError:  # shutdown mid-call: it may still be billed
+            report.cost_usd += await ctx.budget.record_abandoned(
+                ctx.writer.provider, ctx.writer.model, Purpose.WRITE, worst
+            )
+            raise
         except Exception:  # Writer should never raise; be safe anyway
             log.exception("writer raised; batch counted as failed")
             texts, usage = [], []
@@ -395,11 +415,17 @@ async def run_briefing(ctx: PipelineContext, day: date) -> bool:
     if not stories:
         log.info("no stories for the %s briefing", day.isoformat())
         return False
-    if not _affordable(ctx.budget, ctx.writer.worst_case_cost_briefing, stories):
+    worst = _affordable(ctx.budget, ctx.writer.worst_case_cost_briefing, stories)
+    if worst is None:
         log.warning("monthly budget reached: no briefing for %s", day.isoformat())
         return False
     try:
         body, usage = await ctx.writer.write_briefing(stories, briefing_date_label(day))
+    except asyncio.CancelledError:  # shutdown mid-call: it may still be billed
+        await ctx.budget.record_abandoned(
+            ctx.writer.briefing_provider, ctx.writer.briefing_model, Purpose.BRIEFING, worst
+        )
+        raise
     except Exception:  # Writer should never raise; be safe anyway
         log.exception("briefing writer raised")
         return False

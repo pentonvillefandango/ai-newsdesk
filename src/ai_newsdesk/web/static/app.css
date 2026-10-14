@@ -1,6 +1,7 @@
 /* ai-newsdesk: "First light".
    A cool, quiet morning paper. Book-serif headlines, system sans for everything else.
-   One accent (first-light amber) and it means one thing: signal. */
+   One accent (first-light amber by default; the owner can pick another) and it means one thing:
+   signal. */
 
 /* ---------- Tokens ---------- */
 :root {
@@ -16,7 +17,7 @@
   --rule-strong: #aab6c2;
   --track: #dce3e9;
   --accent: #9f5b00;
-  --accent-wash: #f5e6cd;
+  --accent-wash: #f9eedc;
   --on-ink: #f7f9fb;
   --danger: #a3322a;
   --danger-wash: #f7e1de;
@@ -104,6 +105,120 @@
   --danger-wash: #3a1f1e;
   --ok: #7cc4a0;
   --ok-wash: #183026;
+}
+
+/* Accent colour. theme.js sets data-accent on <html> (amber when nothing is stored); only
+   --accent and --accent-wash change. Each swatch in the picker shows its own accent in the
+   current theme, so the swatch classes share the blocks. Amber repeats the base tokens. Every
+   pair is checked for WCAG AA by a test (text on the page, the surface and the wash). */
+:root[data-accent="amber"],
+.swatch--amber {
+  --accent: #9f5b00;
+  --accent-wash: #f9eedc;
+}
+
+:root[data-accent="blue"],
+.swatch--blue {
+  --accent: #1f5fa6;
+  --accent-wash: #dde8f5;
+}
+
+:root[data-accent="green"],
+.swatch--green {
+  --accent: #2d6a3c;
+  --accent-wash: #dcede0;
+}
+
+:root[data-accent="violet"],
+.swatch--violet {
+  --accent: #6a46ad;
+  --accent-wash: #e8e1f5;
+}
+
+:root[data-accent="rose"],
+.swatch--rose {
+  --accent: #a83259;
+  --accent-wash: #f6dfe6;
+}
+
+:root[data-accent="teal"],
+.swatch--teal {
+  --accent: #136a6e;
+  --accent-wash: #d5ecec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="amber"]:not([data-theme="light"]),
+  :root:not([data-theme="light"]) .swatch--amber {
+    --accent: #e2a63c;
+    --accent-wash: #2f2817;
+  }
+
+  :root[data-accent="blue"]:not([data-theme="light"]),
+  :root:not([data-theme="light"]) .swatch--blue {
+    --accent: #79aef0;
+    --accent-wash: #182a40;
+  }
+
+  :root[data-accent="green"]:not([data-theme="light"]),
+  :root:not([data-theme="light"]) .swatch--green {
+    --accent: #72c48a;
+    --accent-wash: #17301f;
+  }
+
+  :root[data-accent="violet"]:not([data-theme="light"]),
+  :root:not([data-theme="light"]) .swatch--violet {
+    --accent: #b9a0f2;
+    --accent-wash: #2a2242;
+  }
+
+  :root[data-accent="rose"]:not([data-theme="light"]),
+  :root:not([data-theme="light"]) .swatch--rose {
+    --accent: #f290ad;
+    --accent-wash: #3a1e29;
+  }
+
+  :root[data-accent="teal"]:not([data-theme="light"]),
+  :root:not([data-theme="light"]) .swatch--teal {
+    --accent: #5fc6c6;
+    --accent-wash: #123234;
+  }
+}
+
+:root[data-theme="dark"][data-accent="amber"],
+:root[data-theme="dark"] .swatch--amber {
+  --accent: #e2a63c;
+  --accent-wash: #2f2817;
+}
+
+:root[data-theme="dark"][data-accent="blue"],
+:root[data-theme="dark"] .swatch--blue {
+  --accent: #79aef0;
+  --accent-wash: #182a40;
+}
+
+:root[data-theme="dark"][data-accent="green"],
+:root[data-theme="dark"] .swatch--green {
+  --accent: #72c48a;
+  --accent-wash: #17301f;
+}
+
+:root[data-theme="dark"][data-accent="violet"],
+:root[data-theme="dark"] .swatch--violet {
+  --accent: #b9a0f2;
+  --accent-wash: #2a2242;
+}
+
+:root[data-theme="dark"][data-accent="rose"],
+:root[data-theme="dark"] .swatch--rose {
+  --accent: #f290ad;
+  --accent-wash: #3a1e29;
+}
+
+:root[data-theme="dark"][data-accent="teal"],
+:root[data-theme="dark"] .swatch--teal {
+  --accent: #5fc6c6;
+  --accent-wash: #123234;
 }
 
 /* ---------- Base ---------- */
@@ -323,21 +438,109 @@ code {
   color: var(--on-ink);
 }
 
+/* Accent picker: a round button showing the current accent; it opens a small menu of six
+   swatches. Hidden without theme.js, like the theme toggle. */
+.accent {
+  display: none;
+  position: relative;
+}
+
+:root[data-theme-ready] .accent {
+  display: inline-flex;
+}
+
+.accent__toggle {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.accent__toggle:hover {
+  border-color: var(--rule-strong);
+}
+
+.accent__current {
+  width: 1rem;
+  height: 1rem;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.accent__menu {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(6, 1.75rem);
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  box-shadow: 0 6px 20px color-mix(in oklab, var(--ink) 16%, transparent);
+}
+
+.accent__menu[hidden] {
+  display: none;
+}
+
+.swatch {
+  appearance: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  cursor: pointer;
+}
+
+.swatch[aria-pressed="true"] {
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 4px var(--ink);
+}
+
+/* Phones: the wordmark, theme, accent and Log out share the first row; the seven nav items
+   fill the second (both fit a 390 px phone). */
 @media (max-width: 40rem) {
   .masthead__inner {
     justify-content: space-between;
+    column-gap: var(--space-3);
+  }
+  .wordmark {
+    font-size: var(--step-1);
   }
   .nav {
     order: 3;
     width: 100%;
     margin-left: 0;
     flex-wrap: wrap;
-    gap: 0 var(--space-3); /* six items fit a 390 px phone */
+    gap: 0 var(--space-2);
     justify-content: space-between;
+    font-size: 0.8125rem;
   }
   .theme {
     order: 1;
     margin-left: auto;
+  }
+  .theme button {
+    padding-inline: 0.5rem;
+  }
+  .accent {
+    order: 1;
+  }
+  .accent__toggle {
+    width: 1.75rem;
+    height: 1.75rem;
   }
   .logout {
     order: 2;
@@ -892,11 +1095,62 @@ code {
   gap: var(--space-7);
 }
 
+.briefing__main,
+.briefing__side {
+  min-width: 0;
+}
+
+.briefing__side {
+  display: grid;
+  gap: var(--space-7);
+  align-content: start;
+}
+
+/* Wide screens: the article keeps a reading measure on the left; the stories it covers and the
+   archive fill the rest of the wide page, as Today does. */
 @media (min-width: 64rem) {
   .briefing {
-    grid-template-columns: minmax(0, var(--measure)) 13rem;
-    column-gap: var(--space-8);
+    grid-template-columns: minmax(0, 45rem) minmax(0, 1fr);
+    column-gap: var(--space-7);
   }
+}
+
+.covered h2 {
+  font-size: var(--step-1);
+  font-style: italic;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.covered__list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+  column-gap: var(--space-5);
+}
+
+.story--compact {
+  padding-block: var(--space-3);
+}
+
+.story--compact:last-child {
+  border-bottom: 1px solid var(--rule);
+}
+
+.story.story--compact .story__meta {
+  padding-right: 0;
+  margin-bottom: var(--space-1);
+}
+
+.story--compact .story__headline {
+  font-size: var(--step-0);
+}
+
+.story__count {
+  margin-top: var(--space-1);
+  color: var(--ink-3);
+  font-size: var(--step--1);
 }
 
 .read {
@@ -1517,6 +1771,254 @@ select:focus-visible {
   display: grid;
   gap: var(--space-7);
   max-width: 60rem;
+}
+
+.models-form {
+  display: grid;
+  gap: var(--space-7);
+}
+
+/* ---------- Models: the flow diagram ----------
+   An ordered list of boxes, left to right in rows (one column on phones). AI steps are
+   accent-coloured; tool and code steps are neutral. Arrows are decorative (aria-hidden): the
+   list order is the flow. The arrow out of the last box in a row is hidden. */
+.flow-panel {
+  margin-bottom: var(--space-7);
+}
+
+.flow-panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-5);
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.flow-panel__head h2 {
+  font-size: var(--step-2);
+  font-style: italic;
+}
+
+.flow-legend {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  color: var(--ink-2);
+  font-size: var(--step--1);
+}
+
+.flow-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.flow-legend__swatch {
+  flex: none;
+  width: 1.25rem;
+  height: 0.875rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+.flow-legend__swatch--ai {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.flow {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+  counter-reset: flow;
+}
+
+.flow__step {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  counter-increment: flow;
+}
+
+.flow__step--ai {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  box-shadow: inset var(--gauge-w) 0 0 var(--accent);
+}
+
+.flow__when {
+  color: var(--ink-2);
+  font-size: var(--step--2);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* The step number, as a small disc (the list itself gives screen readers the order). */
+.flow__when::before {
+  content: counter(flow);
+  content: counter(flow) / "";
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  margin-right: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--ink);
+  color: var(--on-ink);
+  letter-spacing: 0;
+}
+
+.flow__title {
+  font-size: var(--step-1);
+}
+
+.flow__model {
+  font-size: var(--step--1);
+  overflow-wrap: anywhere;
+}
+
+.flow__provider {
+  font-weight: 600;
+}
+
+.flow__model a {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.flow__price {
+  color: var(--ink-2);
+  font-size: var(--step--2);
+}
+
+.flow__text {
+  margin-top: var(--space-1);
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  line-height: 1.45;
+}
+
+.flow__branch {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius-s);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: var(--step--2);
+}
+
+.flow__branch::before {
+  content: "\21B3\00a0";
+  content: "\21B3\00a0" / "";
+}
+
+/* Phones: an arrow down into the next box. */
+.flow__arrow {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 2px;
+  height: var(--space-5);
+  background: var(--rule-strong);
+  transform: translateX(-50%);
+}
+
+.flow__arrow::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  border: 5px solid transparent;
+  border-top-color: var(--rule-strong);
+  border-bottom: 0;
+  transform: translateX(-50%);
+}
+
+@media (min-width: 40rem) {
+  .flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  /* Wider screens: an arrow right, across the gap. */
+  .flow__arrow {
+    top: 50%;
+    left: 100%;
+    width: var(--space-5);
+    height: 2px;
+    transform: translateY(-50%);
+  }
+  .flow__arrow::after {
+    top: 50%;
+    right: 0;
+    bottom: auto;
+    left: auto;
+    border: 5px solid transparent;
+    border-left-color: var(--rule-strong);
+    border-right: 0;
+    transform: translateY(-50%);
+  }
+  .flow__step:nth-child(2n) .flow__arrow {
+    display: none;
+  }
+}
+
+@media (min-width: 64rem) {
+  .flow {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .flow__step:nth-child(2n) .flow__arrow {
+    display: block;
+  }
+  .flow__step:nth-child(4n) .flow__arrow {
+    display: none;
+  }
+}
+
+.flow-notes {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+@media (min-width: 64rem) {
+  .flow-notes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.flow-note {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--step--1);
+}
+
+.flow-note strong {
+  color: var(--ink);
+}
+
+.flow-note--ai {
+  border-color: var(--accent);
+  background: var(--accent-wash);
 }
 
 .panel {
@@ -2336,8 +2838,13 @@ select:focus-visible {
   }
   .thumb[aria-pressed="true"],
   .label-button[aria-pressed="true"],
-  .theme button[aria-pressed="true"] {
+  .theme button[aria-pressed="true"],
+  .swatch[aria-pressed="true"] {
     outline: 2px solid Highlight;
+  }
+  .swatch,
+  .accent__current {
+    forced-color-adjust: none;
   }
   .meter__fill,
   .chart__bar {

@@ -74,6 +74,7 @@ class NullResearchEngine:
 class ScriptedJudge:
     """Verdicts by title substring; default signal 5. Costs: worst $0.001/item, actual less."""
 
+    provider = "anthropic"
     model = MODEL
 
     def __init__(
@@ -118,7 +119,8 @@ class ScriptedJudge:
 class RecordingWriter:
     """Writes every story except those whose headline contains one of `skip_headlines`."""
 
-    model = MODEL
+    provider = briefing_provider = "anthropic"
+    model = briefing_model = MODEL
 
     def __init__(self, skip_headlines: frozenset[str] = frozenset()) -> None:
         self.skip_headlines = skip_headlines
@@ -155,6 +157,7 @@ class RecordingWriter:
 class ScriptedConsolidator:
     """Returns `groups` (or raises `error`); worst case `worst` USD, actual usage is small."""
 
+    provider = "anthropic"
     model = MODEL
 
     def __init__(

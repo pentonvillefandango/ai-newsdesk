@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Compare on Newsdesk{% endblock %}
-{% block scripts %}<script src="/static/settings.js" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/models.js" defer></script>{% endblock %}
 {% block content %}
 {% from "macros/models.html" import model_fields, model_datalists %}
 {% macro aria(name, hint=false) %}{% if hint or errors.get(name) %} aria-describedby="{% if hint %}{{ name }}-hint{% endif %}{% if hint and errors.get(name) %} {% endif %}{% if errors.get(name) %}{{ name }}-error{% endif %}"{% endif %}{% if errors.get(name) %} aria-invalid="true"{% endif %}{% endmacro %}

@@ -39,6 +39,7 @@ class Source(Protocol):
 
 
 class Judge(Protocol):
+    provider: str
     model: str
 
     def worst_case_cost(self, inputs: list[ReviewInput]) -> float: ...  # USD, budget pre-check
@@ -48,7 +49,10 @@ class Judge(Protocol):
 
 
 class Writer(Protocol):
+    provider: str  # the summary writer's
     model: str
+    briefing_provider: str
+    briefing_model: str
 
     def worst_case_cost_stories(self, inputs: list[WriteInput]) -> float: ...
 
@@ -65,6 +69,7 @@ class Writer(Protocol):
 
 
 class Consolidator(Protocol):
+    provider: str
     model: str
 
     def worst_case_cost(self, stories: list[ConsolidationStory]) -> float: ...  # USD

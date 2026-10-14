@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Models on Newsdesk{% endblock %}
+{% block scripts %}<script src="/static/models.js" defer></script>{% endblock %}
+{% block content %}
+{% from "macros/models.html" import model_fields, model_datalists %}
+<header class="page-head">
+  <h1>Models</h1>
+  <p class="lede">Which model does each AI job, and where in the desk's day it is used. Changes apply from the next run.</p>
+</header>
+{% if flash %}
+<div class="notice notice--ok" role="status"><p>{{ flash }}</p></div>
+{% endif %}
+{% if errors %}
+<div class="notice notice--error" role="alert"><p>Nothing was saved. Fix the {{ "field" if errors|length == 1 else errors|length ~ " fields" }} marked below.</p></div>
+{% endif %}
+
+<section class="flow-panel" aria-labelledby="flow-title">
+  <div class="flow-panel__head">
+    <h2 id="flow-title">How the desk works</h2>
+    <ul class="flow-legend" aria-label="Key">
+      <li><span class="flow-legend__swatch flow-legend__swatch--ai" aria-hidden="true"></span>AI model: a paid call, checked against the budget</li>
+      <li><span class="flow-legend__swatch flow-legend__swatch--tool" aria-hidden="true"></span>Tool or code: no AI cost</li>
+    </ul>
+  </div>
+  <ol class="flow">
+    {% for step in flow %}
+    <li class="flow__step flow__step--{{ step.kind }}" id="flow-{{ step.key }}">
+      <p class="flow__when">{{ step.when }}</p>
+      <h3 class="flow__title">{% if step.model %}<span class="visually-hidden">AI step: </span>{% endif %}{{ step.title }}</h3>
+      {% if step.model %}
+      <p class="flow__model"><span class="flow__provider">{{ step.model.provider }}</span> <a href="#model-{{ step.model.job }}">{{ step.model.model }}</a></p>
+      <p class="flow__price">{{ step.model.price or "No known price" }}</p>
+      {% endif %}
+      <p class="flow__text">{{ step.text }}</p>
+      {% if step.branch %}
+      <p class="flow__branch">{{ step.branch }}</p>
+      {% endif %}
+      {% if not loop.last %}<span class="flow__arrow" aria-hidden="true"></span>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  <div class="flow-notes">
+    <p class="flow-note"><strong>Budget check before every AI call.</strong> A call is sent only if its worst-case cost fits in what is left of {{ usd(runtime.monthly_budget_usd) }} a month. <a href="/settings#spending">Change the budget</a></p>
+    <p class="flow-note flow-note--ai"><strong>On demand.</strong> Test, below, makes one tiny call to a model. <a href="/compare">Compare</a> runs 2 to 4 models over recent news, under its own spend cap.</p>
+  </div>
+</section>
+
+<div class="settings">
+  <form class="models-form" method="post" action="/models">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {# Enter in a field submits the first submit button: make that Save, not a Test button. #}
+    <button class="visually-hidden" type="submit" tabindex="-1" aria-hidden="true">Save models</button>
+
+    <section class="panel" id="models" aria-labelledby="models-title">
+      <div class="panel__head">
+        <h2 id="models-title">Choose the models</h2>
+        <p>Each job can use its own provider and model. Prices come from config/pricing.yaml and the OpenRouter model list.</p>
+      </div>
+      <div class="panel__body">
+        {% if model_list_flash %}
+        <div class="notice notice--ok" role="status"><p>{{ model_list_flash }}</p></div>
+        {% endif %}
+        <div class="model-list">
+          <p class="field__hint">{% if catalogue_at %}Model list updated {{ ago(catalogue_at, now) }}.{% else %}Model list not loaded yet.{% endif %}</p>
+          <button class="button button--quiet button--small" type="submit" form="model-list-refresh"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-refresh"></use></svg>Refresh model list</button>
+        </div>
+        {% if judge_warning %}
+        <div class="notice notice--warn" id="judge-warning" role="note"><p>{{ judge_warning }}</p></div>
+        {% endif %}
+        {% for row in model_rows %}
+        <fieldset class="model-row" id="model-{{ row.job }}" aria-describedby="{{ row.job }}-hint">
+          <legend>{{ row.label }}</legend>
+          <p class="field__hint" id="{{ row.job }}-hint">{{ row.hint }}</p>
+          {{ model_fields(row, errors) }}
+          <div class="model-row__test">
+            <button class="button button--quiet button--small" type="submit" formaction="/models/test" name="test_job" value="{{ row.job }}" hx-post="/models/test" hx-target="#test-{{ row.job }}" hx-swap="innerHTML">Test</button>
+            <div class="model-row__result" id="test-{{ row.job }}" aria-live="polite">{% if model_tests.get(row.job) %}{% set t = model_tests[row.job] %}{% include "partials/model_test.html" %}{% endif %}</div>
+          </div>
+        </fieldset>
+        {% endfor %}
+        {{ model_datalists(datalists) }}
+      </div>
+    </section>
+
+    <div class="form__actions">
+      <button class="button" type="submit">Save models</button>
+    </div>
+  </form>
+  <form id="model-list-refresh" method="post" action="/models/refresh" hidden>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  </form>
+</div>
+{% endblock %}

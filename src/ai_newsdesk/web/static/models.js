@@ -1,5 +1,5 @@
-/* Settings, Models rows: optional progressive enhancement. Without it every control still
-   submits and the server picks (a filled "Other model" box wins over the list).
+/* Models rows (the Models and Compare pages): optional progressive enhancement. Without it every
+   control still submits and the server picks (a filled "Other model" box wins over the list).
    With it: a row's model list shows only its provider's models, the text box autocompletes
    from that provider's list, and picking from the list clears the text box.
    No markup is ever written from script. */

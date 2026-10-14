@@ -36,13 +36,16 @@ VALID = {
     "briefing_time": "07:00",
     "daily_review_cap": "500",
     "monthly_budget_usd": "5.00",
+    "show_threshold": "4",
+    "why_it_matters": "on",
+    "hn_min_points": "100",
+}
+# The Models page's form (feedback-2: models moved off Settings).
+MODELS = {
     "judge_provider": "anthropic",
     "judge_model": "claude-haiku-5-5",
     "writer_model": "claude-haiku-5-5",
     "briefing_model": "claude-haiku-5-5",
-    "show_threshold": "4",
-    "why_it_matters": "on",
-    "hn_min_points": "100",
 }
 
 
@@ -64,13 +67,13 @@ def _resolve(client: TestClient, app: FastAPI, name: str) -> str:
     return run(client, app.state.api_keys.resolve_api_key, name)
 
 
-def test_settings_page_shows_estimates_models_and_spend(client: TestClient) -> None:
+def test_settings_page_shows_estimates_and_spend(client: TestClient) -> None:
     r = client.get("/settings")
     assert r.status_code == 200
     for text in (
         "4 times a day, about $2.07 a month",
         "Once a day, about $0.63 a month",
-        "claude-haiku-5-5 ($0.1 in, $0.5 out per million tokens)",
+        "priced with the models chosen on the",
         "of $5.00 spent in October",
         'role="img"',
         "Show as a table",
@@ -122,12 +125,16 @@ def test_other_invalid_values_are_rejected(client: TestClient) -> None:
     for field, bad, message in (
         ("briefing_time", "25:00", "Use the 24-hour form HH:MM, for example 07:00."),
         ("monthly_budget_usd", "-1", "Enter an amount from 0 to 100 dollars."),
-        ("writer_model", "gpt-5", "Choose a Claude model from the list."),
     ):
         r = client.post("/settings", data={"csrf_token": csrf_token(client), **VALID, field: bad})
         assert r.status_code == 422, field
         assert message in r.text, field
-        assert f'value="{bad}"' in r.text or field == "writer_model", field
+        assert f'value="{bad}"' in r.text, field
+    r = client.post(
+        "/models", data={"csrf_token": csrf_token(client), **MODELS, "writer_model": "gpt-5"}
+    )
+    assert r.status_code == 422
+    assert "Choose a Claude model from the list." in r.text
 
 
 def test_settings_posts_need_csrf(client: TestClient) -> None:
@@ -281,18 +288,16 @@ def test_spend_meter_chart_and_last_runs(app: FastAPI, client: TestClient) -> No
 
 
 def test_judge_model_must_match_judge_provider(app: FastAPI, client: TestClient) -> None:
-    bad = {**VALID, "judge_provider": "typesafe", "judge_model": "claude-haiku-5-5"}
-    r = client.post("/settings", data={"csrf_token": csrf_token(client), **bad})
+    bad = {**MODELS, "judge_provider": "typesafe", "judge_model": "claude-haiku-5-5"}
+    r = client.post("/models", data={"csrf_token": csrf_token(client), **bad})
     assert r.status_code == 422
     assert "Choose a model that the selected judge provider offers." in r.text
     assert run(client, load_runtime_settings, app.state.store).judge_provider == "anthropic"
-    bad = {**VALID, "judge_provider": "anthropic", "judge_model": "jev-1.13.0"}
-    assert (
-        client.post("/settings", data={"csrf_token": csrf_token(client), **bad}).status_code == 422
-    )
-    good = {**VALID, "judge_provider": "typesafe", "judge_model": "jev-1.13.0"}
+    bad = {**MODELS, "judge_provider": "anthropic", "judge_model": "jev-1.13.0"}
+    assert client.post("/models", data={"csrf_token": csrf_token(client), **bad}).status_code == 422
+    good = {**MODELS, "judge_provider": "typesafe", "judge_model": "jev-1.13.0"}
     r = client.post(
-        "/settings", data={"csrf_token": csrf_token(client), **good}, follow_redirects=False
+        "/models", data={"csrf_token": csrf_token(client), **good}, follow_redirects=False
     )
     assert r.status_code == 303
     assert run(client, load_runtime_settings, app.state.store).judge_model == "jev-1.13.0"
@@ -349,17 +354,17 @@ async def test_dev_seed_fills_a_database(tmp_path: Path) -> None:
 def test_saving_an_openrouter_model_needs_the_key_first(app: FastAPI, client: TestClient) -> None:
     run(client, _drain, app)  # the start-up catalogue refresh
     choice = {
-        **VALID,
+        **MODELS,
         "writer_provider": "openrouter",
         "writer_model": "google/gemini-3.8-flash",
     }
-    r = _post(client, "/settings", choice)
+    r = _post(client, "/models", choice)
     assert r.status_code == 422  # type: ignore[attr-defined]
     assert "Add your OpenRouter API key first." in r.text  # type: ignore[attr-defined]
     assert run(client, load_runtime_settings, app.state.store).writer_provider == "anthropic"
 
     _post(client, "/settings/keys/openrouter", {"key": "sk-or-" + "k" * 30})
-    r = _post(client, "/settings", choice)
+    r = _post(client, "/models", choice)
     assert r.status_code == 303  # type: ignore[attr-defined]
     rt = run(client, load_runtime_settings, app.state.store)
     assert (rt.writer_provider, rt.writer_model) == ("openrouter", "google/gemini-3.8-flash")
@@ -372,8 +377,8 @@ def test_unpriced_and_free_models_are_refused(app: FastAPI, client: TestClient) 
         ("openai", "gpt-unknown", "no known price"),
         ("anthropic", "anthropic/claude-haiku-5.5", "Choose a Claude model from the list."),
     ):
-        data = {**VALID, "consolidator_provider": provider, "consolidator_model": model}
-        r = _post(client, "/settings", data)
+        data = {**MODELS, "consolidator_provider": provider, "consolidator_model": model}
+        r = _post(client, "/models", data)
         assert r.status_code == 422, model  # type: ignore[attr-defined]
         assert message in r.text, model  # type: ignore[attr-defined]
 

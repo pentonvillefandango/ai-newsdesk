@@ -173,3 +173,61 @@ def test_briefing_skips_story_ids_that_no_longer_exist(app: FastAPI, client: Tes
         assert 'href="https://lab.example/kept"' in r.text
         assert "merged-away" not in r.text
         assert "a merged one" in r.text
+
+
+def test_the_side_column_has_the_covered_stories_and_the_archive(
+    app: FastAPI, client: TestClient
+) -> None:
+    """Feedback-2: compact cards for the stories the briefing covers, in its order, skipping
+    ids that no longer exist; the archive sits in the same column."""
+    store = app.state.store
+    lab = run(client, seed.add_source, store, name="Example Lab")
+    hn = run(client, seed.add_source, store, name="HN")
+    first = run(
+        client,
+        seed.add_story,
+        store,
+        at=NOW - timedelta(hours=3),
+        headline="Example Lab ships a model",
+        signal=8,
+        sources=[
+            (lab, "https://lab.example/model", "Model post"),
+            (hn, "https://news.example/item?id=1", "Discussion"),
+        ],
+    )
+    second = run(
+        client,
+        seed.add_story,
+        store,
+        at=NOW - timedelta(hours=2),
+        headline="A <b>bold</b> claim",
+        signal=5,
+        sources=[(lab, "javascript:alert(1)", "Bad link")],
+    )
+    _briefing(client, app, date(2026, 10, 13), "Older.", [])
+    _briefing(client, app, date(2026, 10, 14), "Today's news.", [second, 424242, first])
+    text = client.get("/briefing").text
+    side = text[text.index('<aside class="briefing__side"') : text.index("</aside>")]
+    assert '<h2 id="covered-title">In this briefing</h2>' in side
+    cards = side.split('<li class="story story--compact"')[1:]
+    assert len(cards) == 2  # 424242 was merged away
+    assert 'data-signal="5"' in cards[0] and "A &lt;b&gt;bold&lt;/b&gt; claim" in cards[0]
+    assert "<a " not in cards[0].split("</h3>")[0]  # an unsafe link renders as text
+    assert "1 source<" in cards[0]
+    assert 'data-signal="8"' in cards[1]
+    assert (
+        '<a href="https://lab.example/model" rel="noopener noreferrer" target="_blank">'
+        "Example Lab ships a model</a>" in cards[1]
+    )
+    assert "2 sources<" in cards[1]
+    assert '<span class="gauge" aria-hidden="true"></span>' in cards[1]
+    # The archive moved into the column.
+    assert '<nav class="archive" aria-labelledby="archive-title">' in side
+    assert 'href="/briefing/2026-10-13">Tue 13 Oct</a>' in side
+
+
+def test_a_briefing_without_stories_has_no_covered_list(app: FastAPI, client: TestClient) -> None:
+    _briefing(client, app, date(2026, 10, 14), "Quiet day.", [424242])
+    text = client.get("/briefing").text
+    assert "In this briefing" not in text
+    assert '<nav class="archive"' in text

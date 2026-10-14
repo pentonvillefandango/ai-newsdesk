@@ -1,3 +1,6 @@
+"""The Settings form (schedule, budget, reading) and the Models form (each job's provider and
+model) are parsed separately: saving one never touches the other's fields (feedback-2)."""
+
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping
@@ -5,7 +8,7 @@ from collections.abc import Collection, Mapping
 import pytest
 
 from ai_newsdesk.runtime_settings import RuntimeSettings
-from ai_newsdesk.web.forms import SettingsForm, parse_settings_form
+from ai_newsdesk.web.forms import SettingsForm, parse_models_form, parse_settings_form
 from tests.llm.test_validate import CATALOGUE, PRICES
 
 KEYS = {"anthropic", "openai", "openrouter"}
@@ -17,7 +20,8 @@ def parse(
     current: RuntimeSettings | None = None,
     keys: Collection[str] = KEYS,
 ) -> SettingsForm:
-    return parse_settings_form(
+    """The Models form."""
+    return parse_models_form(
         form,
         current=current or RuntimeSettings(),
         prices=PRICES,
@@ -26,41 +30,56 @@ def parse(
     )
 
 
-VALID = {
+SETTINGS = {
     "runs_per_day": "4",
     "briefing_time": "07:00",
     "daily_review_cap": "500",
     "monthly_budget_usd": "5.00",
-    "judge_provider": "anthropic",
-    "judge_model": "claude-haiku-5-5",
-    "writer_model": "claude-haiku-5-5",
-    "briefing_model": "claude-sonnet-5-5",
     "show_threshold": "4",
     "why_it_matters": "on",
     "hn_min_points": "100",
 }
+VALID = {
+    "judge_provider": "anthropic",
+    "judge_model": "claude-haiku-5-5",
+    "writer_model": "claude-haiku-5-5",
+    "briefing_model": "claude-sonnet-5-5",
+}
 
 
-def test_valid_form() -> None:
-    form = parse(VALID)
+def test_valid_settings_form() -> None:
+    form = parse_settings_form(SETTINGS)
     assert form.ok
     assert form.values == {
         "runs_per_day": 4,
         "briefing_time": "07:00",
         "daily_review_cap": 500,
         "monthly_budget_usd": 5.0,
-        "judge_provider": "anthropic",
-        "judge_model": "claude-haiku-5-5",
-        "writer_model": "claude-haiku-5-5",
-        "briefing_model": "claude-sonnet-5-5",
         "show_threshold": 4,
         "why_it_matters": True,
         "hn_min_points": 100,
     }
 
 
+def test_the_settings_form_ignores_model_fields() -> None:
+    form = parse_settings_form({**SETTINGS, **VALID, "writer_provider": "openai"})
+    assert form.ok
+    assert not any(key.endswith(("_provider", "_model")) for key in form.values)
+
+
+def test_valid_models_form() -> None:
+    form = parse(VALID)
+    assert form.ok
+    assert form.values == {
+        "judge_provider": "anthropic",
+        "judge_model": "claude-haiku-5-5",
+        "writer_model": "claude-haiku-5-5",
+        "briefing_model": "claude-sonnet-5-5",
+    }
+
+
 def test_unchecked_box_means_off() -> None:
-    form = parse({k: v for k, v in VALID.items() if k != "why_it_matters"})
+    form = parse_settings_form({k: v for k, v in SETTINGS.items() if k != "why_it_matters"})
     assert form.values["why_it_matters"] is False
 
 
@@ -72,11 +91,16 @@ def test_each_field_is_validated() -> None:
         "monthly_budget_usd": ("nan", "Enter an amount from 0 to 100 dollars."),
         "show_threshold": ("11", "Enter a whole number from 0 to 10."),
         "hn_min_points": ("-1", "Enter a whole number from 0 to 10000."),
+    }
+    for field, (bad, message) in cases.items():
+        form = parse_settings_form({**SETTINGS, field: bad})
+        assert form.errors == {field: message}, field
+    model_cases = {
         "judge_provider": ("mistral", "Choose a judge provider."),
         "writer_model": ("jev-1.13.0", "Choose a Claude model from the list."),
         "briefing_model": ("gpt-5", "Choose a Claude model from the list."),
     }
-    for field, (bad, message) in cases.items():
+    for field, (bad, message) in model_cases.items():
         form = parse({**VALID, field: bad})
         assert form.errors == {field: message}, field
 
@@ -146,8 +170,8 @@ def test_typesafe_judge_keeps_its_own_check_and_needs_no_key() -> None:
 
 
 def test_a_job_missing_from_the_form_is_left_as_it_is() -> None:
-    """Today's page posts no provider fields and no consolidator model: those keep their saved
-    values, and a posted model is checked against the saved provider."""
+    """A form without a job's provider (or without its model) keeps the saved values, and a
+    posted model is checked against the saved provider."""
     current = RuntimeSettings(
         writer_provider="openrouter",
         writer_model="google/gemini-3.8-flash",

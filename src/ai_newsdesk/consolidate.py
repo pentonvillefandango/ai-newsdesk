@@ -10,6 +10,7 @@ each group into its best story. Failures are local: the run always carries on.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import Counter
 from collections.abc import Sequence
@@ -77,6 +78,7 @@ def pick_keep(group: Sequence[int], stories: dict[int, ConsolidationStory]) -> i
 class LLMConsolidator:
     def __init__(self, client: ModelClient, *, max_tokens: int = MAX_TOKENS) -> None:
         self.client = client
+        self.provider = client.provider
         self.model = client.model
         self.max_tokens = max_tokens
 
@@ -115,10 +117,16 @@ class ConsolidationResult:
 
 
 async def consolidate(
-    store: Store, consolidator: Consolidator, budget: Budget, now: datetime
+    store: Store,
+    consolidator: Consolidator,
+    budget: Budget,
+    now: datetime,
+    *,
+    into: ConsolidationResult | None = None,
 ) -> ConsolidationResult:
-    """One consolidation pass. Never raises (failures are logged and the result is empty)."""
-    result = ConsolidationResult()
+    """One consolidation pass. Never raises (failures are logged and the result is empty),
+    except for a cancel; pass `into` to keep the cost recorded before one."""
+    result = into if into is not None else ConsolidationResult()
     try:
         stories = await store.consolidation_candidates(
             now, hours=WINDOW_HOURS, limit=CANDIDATE_LIMIT
@@ -135,7 +143,13 @@ async def consolidate(
             log.warning("monthly budget reached: story consolidation skipped")
             result.skipped = True
             return result
-        groups, usage = await consolidator.find_groups(stories)
+        try:
+            groups, usage = await consolidator.find_groups(stories)
+        except asyncio.CancelledError:  # shutdown mid-call: it may still be billed
+            result.cost_usd += await budget.record_abandoned(
+                consolidator.provider, consolidator.model, Purpose.REVIEW, worst
+            )
+            raise
         for u in usage:
             result.cost_usd += await budget.record(u)
         by_id = {s.id: s for s in stories}

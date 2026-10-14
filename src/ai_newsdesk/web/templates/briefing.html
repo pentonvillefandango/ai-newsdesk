@@ -2,7 +2,7 @@
 {% block title %}Briefing on Newsdesk{% endblock %}
 {% block content %}
 <div class="briefing">
-  <article aria-labelledby="briefing-title">
+  <article class="briefing__main" aria-labelledby="briefing-title">
     <header class="page-head">
       {% if briefing %}
       <h1 id="briefing-title"><time datetime="{{ briefing.date.isoformat() }}">{{ day_label(briefing.date) }}</time></h1>
@@ -27,15 +27,35 @@
     </div>
     {% endif %}
   </article>
-  {% if archive %}
-  <nav class="archive" aria-labelledby="archive-title">
-    <h2 id="archive-title">All briefings</h2>
-    <ul>
-      {% for day in archive %}
-      <li><a href="/briefing/{{ day.isoformat() }}"{% if briefing and briefing.date == day %} aria-current="page"{% endif %}>{{ short_date(day) }}{% if day.year != now.year %} {{ day.year }}{% endif %}</a></li>
-      {% endfor %}
-    </ul>
-  </nav>
-  {% endif %}
+  <aside class="briefing__side" aria-label="Stories and archive">
+    {% if covered %}
+    <section class="covered" aria-labelledby="covered-title">
+      <h2 id="covered-title">In this briefing</h2>
+      <ol class="covered__list">
+        {% for story in covered %}
+        {% set lead_url = story.sources[0].url|safe_url if story.sources else '#' %}
+        <li class="story story--compact" data-signal="{{ signal_of(story.score) }}">
+          <span class="gauge" aria-hidden="true"></span>
+          <div class="story__body">
+            <p class="story__meta">{% if story.scored %}<span class="badge">Signal {{ signal_of(story.score) }}</span>{% else %}<span class="badge badge--unscored">Unscored</span>{% endif %}<span>{{ category_label(story.category) }}</span></p>
+            <h3 class="story__headline">{% if lead_url != '#' %}<a href="{{ lead_url }}" rel="noopener noreferrer" target="_blank">{{ story.headline }}</a>{% else %}{{ story.headline }}{% endif %}</h3>
+            <p class="story__count">{{ story.sources|length }} {{ "source" if story.sources|length == 1 else "sources" }}</p>
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+    </section>
+    {% endif %}
+    {% if archive %}
+    <nav class="archive" aria-labelledby="archive-title">
+      <h2 id="archive-title">All briefings</h2>
+      <ul>
+        {% for day in archive %}
+        <li><a href="/briefing/{{ day.isoformat() }}"{% if briefing and briefing.date == day %} aria-current="page"{% endif %}>{{ short_date(day) }}{% if day.year != now.year %} {{ day.year }}{% endif %}</a></li>
+        {% endfor %}
+      </ul>
+    </nav>
+    {% endif %}
+  </aside>
 </div>
 {% endblock %}

@@ -2,7 +2,8 @@
 
 A comparison runs 2-4 models over a sample with the production job classes (LLMJudge or
 LLMWriter), their prompts and the pipeline's batching. Every call is pre-checked against both
-the comparison's cap and the month's budget (CompareGuard) and recorded as spend. Outputs go
+the comparison's cap and the month's budget (CompareGuard) and recorded as spend; a call
+abandoned by a time limit may still be billed, so it is recorded at its worst case. Outputs go
 to compare_results only: no verdict is saved and no summary replaced. The run holds the
 pipeline lock (taken by the caller), so each call and the whole run are time-limited.
 
@@ -23,9 +24,9 @@ from typing import Literal
 
 from ai_newsdesk.budget import Budget
 from ai_newsdesk.judges.llm import LLMJudge
-from ai_newsdesk.llm.base import ModelClient
+from ai_newsdesk.llm.base import ModelClient, abandoned_usage
 from ai_newsdesk.llm.factory import UnusableModelError
-from ai_newsdesk.models import ReviewInput, StoryText, Usage, Verdict, WriteInput
+from ai_newsdesk.models import Purpose, ReviewInput, StoryText, Usage, Verdict, WriteInput
 from ai_newsdesk.pipeline import REVIEW_BATCH, WRITE_BATCH, judge_inputs, stored_signal
 from ai_newsdesk.protocols import Clock
 from ai_newsdesk.runtime_settings import RuntimeSettings
@@ -92,6 +93,7 @@ class _Runner:
     batch_size: int
     worst_case: Callable[[list[Subject]], float]
     call: Callable[[list[Subject]], Awaitable[tuple[Outputs, list[Usage]]]]
+    purpose: Purpose  # one call per batch, so an abandoned batch is one call's worst case
 
     def batches(self, sample: Sequence[Subject]) -> list[list[Subject]]:
         size = self.batch_size
@@ -107,7 +109,10 @@ def _runner(job: CompareJob, client: ModelClient) -> _Runner:
             return {v.item_id: v.model_dump(mode="json") for v in result.verdicts}, result.usage
 
         return _Runner(
-            REVIEW_BATCH, lambda batch: judge.worst_case_cost(_judge_inputs(batch)), review
+            REVIEW_BATCH,
+            lambda batch: judge.worst_case_cost(_judge_inputs(batch)),
+            review,
+            Purpose.REVIEW,
         )
     writer = LLMWriter(client, client)  # the briefing client is never used here
 
@@ -116,7 +121,10 @@ def _runner(job: CompareJob, client: ModelClient) -> _Runner:
         return {t.story_id: t.model_dump(mode="json") for t in texts}, usage
 
     return _Runner(
-        WRITE_BATCH, lambda batch: writer.worst_case_cost_stories(_write_inputs(batch)), write
+        WRITE_BATCH,
+        lambda batch: writer.worst_case_cost_stories(_write_inputs(batch)),
+        write,
+        Purpose.WRITE,
     )
 
 
@@ -147,11 +155,10 @@ class CompareGuard:
     def __init__(self, budget: Budget, cap_usd: float) -> None:
         self.budget = budget
         self.cap_usd = cap_usd
-        self.recorded = 0.0  # spend recorded through Budget
-        self._held = 0.0  # worst cases of calls whose usage is unknown (timed out)
+        self.recorded = 0.0  # spend recorded through Budget, abandoned calls included
 
     def remaining(self) -> float:
-        return max(0.0, self.cap_usd - self.recorded - self._held)
+        return max(0.0, self.cap_usd - self.recorded)
 
     def can_afford(self, worst_case_usd: float) -> bool:
         return worst_case_usd <= self.remaining() and self.budget.can_afford(worst_case_usd)
@@ -160,10 +167,6 @@ class CompareGuard:
         cost = await self.budget.record(usage)
         self.recorded += cost
         return cost
-
-    def hold(self, worst_case_usd: float) -> None:
-        """A call that timed out may still be billed: count its worst case against the cap."""
-        self._held += worst_case_usd
 
 
 async def _run_model(
@@ -190,34 +193,51 @@ async def _run_model(
             )
             log.info("comparison %d: %s stopped at the cap", run_id, model.key)
             return False
+        abandoned = abandoned_usage(model.provider, model.model, runner.purpose, worst)
         started = time.perf_counter()
         try:
             async with asyncio.timeout(call_timeout_s):
                 outputs, usage = await runner.call(batch)
         except TimeoutError:
             log.warning("comparison %d: %s did not answer in time", run_id, model.key)
-            outputs, usage = {}, []
-            guard.hold(worst)
-        latency_ms = round((time.perf_counter() - started) * 1000)
-        cost = 0.0
-        for u in usage:
-            cost += await guard.record(u)
-        share = cost / len(batch)
-        await store.add_compare_results(
-            run_id,
-            [
-                CompareResult(
-                    model_key=model.key,
-                    subject_id=subject_id(s),
-                    output=outputs.get(subject_id(s)),
-                    ok=subject_id(s) in outputs,
-                    latency_ms=latency_ms,
-                    cost_usd=share,
-                )
-                for s in batch
-            ],
-        )
+            outputs, usage = {}, [abandoned]
+        except asyncio.CancelledError:  # the run's time limit or a restart, mid-call
+            await _save_batch(store, run_id, model, batch, {}, [abandoned], guard, started)
+            raise
+        await _save_batch(store, run_id, model, batch, outputs, usage, guard, started)
     return True
+
+
+async def _save_batch(
+    store: Store,
+    run_id: int,
+    model: CompareModel,
+    batch: list[Subject],
+    outputs: Outputs,
+    usage: list[Usage],
+    guard: CompareGuard,
+    started: float,
+) -> None:
+    """Records the batch's spend and stores its results, the cost shared over its subjects."""
+    latency_ms = round((time.perf_counter() - started) * 1000)
+    cost = 0.0
+    for u in usage:
+        cost += await guard.record(u)
+    share = cost / len(batch)
+    await store.add_compare_results(
+        run_id,
+        [
+            CompareResult(
+                model_key=model.key,
+                subject_id=subject_id(s),
+                output=outputs.get(subject_id(s)),
+                ok=subject_id(s) in outputs,
+                latency_ms=latency_ms,
+                cost_usd=share,
+            )
+            for s in batch
+        ],
+    )
 
 
 async def run_comparison(

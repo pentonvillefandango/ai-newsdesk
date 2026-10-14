@@ -31,6 +31,7 @@ class FakeResearchEngine:
 
 
 class FakeJudge:
+    provider = "anthropic"
     model = "claude-haiku-5-5"
 
     def worst_case_cost(self, inputs: list[ReviewInput]) -> float:
@@ -41,7 +42,8 @@ class FakeJudge:
 
 
 class FakeWriter:
-    model = "claude-haiku-5-5"
+    provider = briefing_provider = "anthropic"
+    model = briefing_model = "claude-haiku-5-5"
 
     def worst_case_cost_stories(self, inputs: list[WriteInput]) -> float:
         return 0.0

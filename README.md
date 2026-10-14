@@ -11,10 +11,10 @@ A self-hosted, high-signal AI news feed. It collects news from AI labs and from 
 - An AI judge (Claude Haiku by default; optional TypeSafe Jev) scores signal and junk; duplicates become one story with every source linked (a consolidation pass merges stories that report the same event). Posts from people on X are kept out of news stories and shown on their own X page (last 7 days, newest first).
 - Story summaries with an optional "why it matters" line, and a daily briefing.
 - A hard monthly AI budget (default $5), checked before every call.
-- Each AI job (judge, summary writer, briefing writer, duplicate merger) can use its own provider: Anthropic (default), OpenAI or OpenRouter. Settings offers a priced shortlist (`config/models.yaml`), any other priced model with structured output by typing its id, and a Test button that makes one tiny, budget-checked call.
+- Each AI job (judge, summary writer, briefing writer, duplicate merger) can use its own provider: Anthropic (default), OpenAI or OpenRouter. The Models page offers a priced shortlist (`config/models.yaml`), any other priced model with structured output by typing its id, and a Test button that makes one tiny, budget-checked call. It opens with a live diagram of the desk's end-to-end flow: when each AI model is used (with the provider, model and price chosen now) and when the tools run.
 - A Compare page runs 2 to 4 models over the same recent news with the production prompts, under its own spend cap, and shows how they differ: agreement with the current judge, your thumbs and your labels, or summaries side by side. One click makes the winner the production model.
-- Settings page: run frequency, caps, models, write-only API keys (each tested before it is saved), spend meter, cost estimates priced with the chosen models.
-- Wide "lead + grid" layout on desktop, single column on phones; an Auto / Light / Dark theme toggle remembered per browser.
+- Settings page: run frequency, caps, write-only API keys (each tested before it is saved), spend meter, cost estimates priced with the chosen models.
+- Wide "lead + grid" layout on desktop, single column on phones; an Auto / Light / Dark theme toggle and a choice of six accent colours (Amber, Blue, Green, Violet, Rose, Teal), both remembered per browser.
 - One owner password; lab-only behind a shared Caddy with HTTPS.
 
 ## Quick start
@@ -37,7 +37,7 @@ Open `http://localhost:8765/login` (use `localhost`: browsers accept the app's s
 
 ## Configuration
 
-All settings come from `.env` (copy `.env.example`; mode 600; never commit it). Run-time tunables (frequency, caps, models, thresholds, "why it matters") live in the database and are edited on the Settings page.
+All settings come from `.env` (copy `.env.example`; mode 600; never commit it). Run-time tunables (frequency, caps, thresholds, "why it matters") live in the database and are edited on the Settings page; each job's model is chosen on the Models page.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

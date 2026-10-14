@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from ai_newsdesk.llm.anthropic_client import AnthropicClient
-from ai_newsdesk.llm.factory import SdkPool, UnusableModelError, make_client
+from ai_newsdesk.llm.factory import CALL_TIMEOUT_S, SdkPool, UnusableModelError, make_client
 from ai_newsdesk.llm.openai_client import OPENROUTER_BASE_URL, OpenAICompatibleClient
 from ai_newsdesk.llm.prices import PriceBook
 from tests.llm.test_validate import CATALOGUE, PRICES, PRICING
@@ -121,10 +121,15 @@ async def test_a_pool_leaves_an_injected_http_client_open() -> None:
     await http.aclose()
 
 
-def test_a_pool_can_turn_retries_off() -> None:
-    pool = SdkPool(KEYS, max_retries=0)
-    assert pool.openai_compatible("openrouter").max_retries == 0
-    assert pool.anthropic().max_retries == 0
-    default = SdkPool(KEYS)
-    assert default.openai_compatible("openai").max_retries == 2
-    assert default.anthropic().max_retries == 2
+def test_production_clients_never_retry_and_time_out_after_120_seconds() -> None:
+    """Feedback-2: a failed call is recorded once at its worst case, so no SDK retry may add an
+    unrecorded attempt (the next run retries the items); and no call holds the run lock for
+    long."""
+    pool = SdkPool(KEYS)
+    for sdk in (
+        pool.anthropic(),
+        pool.openai_compatible("openai"),
+        pool.openai_compatible("openrouter"),
+    ):
+        assert sdk.max_retries == 0
+        assert sdk.timeout == CALL_TIMEOUT_S == 120
