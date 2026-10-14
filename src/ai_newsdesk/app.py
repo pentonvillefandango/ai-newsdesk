@@ -154,8 +154,8 @@ def refresh_in_background(
 ) -> asyncio.Task[None]:
     """Refresh the catalogue without blocking the caller (or holding the pipeline lock).
     refresh() never raises: a failure is logged and the last good copy is kept. After a
-    successful refresh `then` runs (the context rebuild), so a job whose model could not be
-    priced before the list arrived gets its real client."""
+    successful refresh `then` runs (the context rebuild when a job uses the list), so a job
+    whose model could not be priced before the list arrived gets its real client."""
 
     async def refresh() -> None:
         if not await catalogue.refresh() or then is None:
@@ -254,14 +254,14 @@ def create_app(
             )
             # Always built, so Refresh now can use run_now() even with the schedule switched off.
             scheduler = Scheduler(
-                app.state.ctx, nightly_fn=nightly_jobs(catalogue, background, rebuild_context)
+                app.state.ctx, nightly_fn=nightly_jobs(catalogue, background, rebuild_if_list_used)
             )
             if settings.scheduler_enabled:
                 scheduler.start()
             app.state.scheduler = scheduler
             app.state.run_lock = scheduler.lock
             if catalogue.is_stale():  # never blocks start-up
-                refresh_in_background(catalogue, background, rebuild_context)
+                refresh_in_background(catalogue, background, rebuild_if_list_used)
             log.info(
                 "ai-newsdesk started (scheduler %s)", "on" if settings.scheduler_enabled else "off"
             )
@@ -286,14 +286,34 @@ def create_app(
         redirect_slashes=False,
     )
 
+    # Rebuilds are serialised, so the later caller always reads the latest settings and keys
+    # and a slow, stale rebuild can never overwrite a newer context. Not the pipeline lock: a
+    # rebuild never waits for a run (a run keeps the context it started with).
+    rebuild_lock = asyncio.Lock()
+
     async def rebuild_context() -> None:
-        ctx = await factory(app.state.deps)
-        app.state.ctx = ctx
-        if app.state.scheduler is not None:
-            app.state.scheduler.ctx = ctx
+        async with rebuild_lock:
+            ctx = await factory(app.state.deps)
+            app.state.ctx = ctx
+            if app.state.scheduler is not None:
+                app.state.scheduler.ctx = ctx
+
+    async def rebuild_if_list_used() -> None:
+        """After a model-list refresh. With every job on Anthropic the list changes no client,
+        so skip it (each rebuild leaves the old SDK clients to the garbage collector)."""
+        if (await load_runtime_settings(app.state.store)).uses_model_list():
+            await rebuild_context()
+
+    async def refresh_model_list() -> bool:
+        """Refresh the list now (Settings' refresh button) and rebuild when a job uses it."""
+        ok = await app.state.catalogue.refresh()
+        if ok:
+            await rebuild_if_list_used()
+        return ok
 
     app.state.settings = settings
     app.state.rebuild_context = rebuild_context
+    app.state.refresh_model_list = refresh_model_list
     install_security(app, settings)
     app.include_router(build_router())
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from typing import Any
 
@@ -62,3 +63,47 @@ async def test_typesafe_without_the_sdk(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setitem(sys.modules, "typesafe_sdk", None)
     message = await check_typesafe_key("ts-key", RuntimeSettings())
     assert message is not None and "isn't installed" in message
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        ({}, "claude-haiku-5-5"),
+        ({"writer_model": "claude-sonnet-5-5"}, "claude-sonnet-5-5"),
+        # The writer is elsewhere: the next Anthropic job's model, else the default.
+        (
+            {
+                "writer_provider": "openrouter",
+                "writer_model": "google/gemini-3.8-flash",
+                "judge_model": "claude-opus-5-5",
+            },
+            "claude-opus-5-5",
+        ),
+        (
+            {
+                "judge_provider": "openai",
+                "judge_model": "gpt-5.4-nano",
+                "writer_provider": "openrouter",
+                "writer_model": "google/gemini-3.8-flash",
+                "briefing_provider": "openai",
+                "briefing_model": "gpt-5.4-nano",
+                "consolidator_provider": "openrouter",
+                "consolidator_model": "openai/gpt-5.4-nano",
+            },
+            "claude-haiku-5-5",
+        ),
+    ],
+)
+async def test_anthropic_key_test_always_names_a_claude_model(
+    changes: dict[str, str], expected: str
+) -> None:
+    models: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        models.append(json.loads(request.content)["model"])
+        return httpx2.Response(200, json={"input_tokens": 5})
+
+    runtime = RuntimeSettings.model_validate(changes)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http:
+        assert await check_anthropic_key("sk-good", runtime, http_client=http) is None
+    assert models == [expected]

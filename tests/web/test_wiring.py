@@ -125,14 +125,18 @@ def test_unusable_choices_fall_back_to_claude_haiku_and_are_logged(
         run(c, store.set_setting, "consolidator_provider", "openai")
         run(c, store.set_setting, "consolidator_model", "gpt-unknown")
         run(c, store.set_setting, "judge_model", "claude-unknown")
+        run(c, store.set_setting, "briefing_provider", "openrouter")
+        run(c, store.set_setting, "briefing_model", "google/gemini-3.8-flash")
         with caplog.at_level(logging.WARNING):
             run(c, app.state.rebuild_context)
         clients = _clients(app.state.ctx)
-    for job in ("judge", "writer", "consolidator"):
+    for job in ("judge", "writer", "briefing", "consolidator"):
         client = clients[job]
         assert isinstance(client, AnthropicClient), job
         assert client.model == "claude-haiku-5-5", job
-    assert clients["consolidator"].cache_system is False  # the job's options survive
+    # Each job's own options survive the fall-back.
+    assert clients["briefing"].effort == "medium"
+    assert clients["consolidator"].cache_system is False
     assert "Add your OpenRouter API key first." in caplog.text
     assert "no known price" in caplog.text
     assert OPENAI_KEY not in caplog.text
@@ -180,3 +184,60 @@ def test_a_first_start_rebuilds_once_the_model_list_arrives(tmp_path: Path) -> N
         judge = _clients(app.state.ctx)["judge"]
         assert isinstance(judge, OpenAICompatibleClient)
         assert app.state.scheduler.ctx is app.state.ctx
+
+
+def test_the_list_refresh_rebuilds_only_when_a_job_uses_it(tmp_path: Path) -> None:
+    """With every job on Anthropic the model list changes no client, so a refresh leaves the
+    context (and its SDK clients) alone."""
+    app = _app(tmp_path, **BOTH_KEYS)
+    with TestClient(app, base_url=BASE_URL) as c:
+        _settle(c, app)
+        before = app.state.ctx
+        run(c, app.state.refresh_model_list)
+        _settle(c, app)
+        assert app.state.ctx is before
+        ctx = _use(c, app, writer_provider="openai", writer_model="gpt-5.4-nano")
+        run(c, app.state.refresh_model_list)
+        _settle(c, app)
+        assert app.state.ctx is not ctx
+
+
+def test_rebuilds_never_overlap(tmp_path: Path) -> None:
+    """A slow rebuild that started first can never overwrite the context of a later one."""
+    release = asyncio.Event()
+    armed: list[bool] = []
+    built: list[str] = []
+
+    async def factory(deps: Any) -> Any:
+        if not armed:
+            return "startup"
+        label = "first" if not built else "second"
+        built.append(label)
+        if label == "first":
+            await release.wait()
+        return label
+
+    app = create_app(
+        make_settings(tmp_path),
+        ctx_factory=factory,
+        key_testers={},
+        config_dir=CONFIG_DIR,
+        clock=FixedClock(NOW),
+        catalogue_fetch=fixture_catalogue,
+    )
+    with TestClient(app, base_url=BASE_URL) as c:
+        _settle(c, app)
+        armed.append(True)
+
+        async def race() -> None:
+            first = asyncio.create_task(app.state.rebuild_context())
+            await asyncio.sleep(0)
+            second = asyncio.create_task(app.state.rebuild_context())
+            await asyncio.sleep(0)
+            release.set()
+            await asyncio.gather(first, second)
+
+        run(c, race)
+        assert built == ["first", "second"]
+        assert app.state.ctx == "second"
+        assert app.state.scheduler.ctx == "second"

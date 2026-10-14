@@ -41,7 +41,8 @@ def scrub(message: str, key: str) -> str:
 async def check_anthropic_key(
     key: str, runtime: RuntimeSettings, *, http_client: Any | None = None
 ) -> str | None:
-    """`count_tokens` costs nothing and proves the key and the writer model are usable.
+    """`count_tokens` costs nothing and proves the key and a Claude model in use are usable
+    (the writer's when it is on Anthropic; never another provider's model id).
 
     `http_client` is for tests: the anthropic SDK (>= 1.13) sends through `httpx2`, which respx
     does not patch, so tests pass an `httpx2.AsyncClient` with a `MockTransport`.
@@ -51,7 +52,7 @@ async def check_anthropic_key(
     )
     try:
         await client.messages.count_tokens(
-            model=runtime.writer_model,
+            model=runtime.anthropic_model(),
             messages=[{"role": "user", "content": "ping"}],
         )
     except anthropic.AuthenticationError:

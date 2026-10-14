@@ -47,6 +47,23 @@ class RuntimeSettings(BaseModel):
     why_it_matters: bool = True
     hn_min_points: int = Field(default=100, ge=0)
 
+    def _jobs(self) -> list[tuple[str, str]]:
+        """(provider, model) per AI job, writer first."""
+        return [
+            (self.writer_provider, self.writer_model),
+            (self.judge_provider, self.judge_model),
+            (self.briefing_provider, self.briefing_model),
+            (self.consolidator_provider, self.consolidator_model),
+        ]
+
+    def anthropic_model(self) -> str:
+        """A Claude model a job uses (the writer's when it is on Anthropic), else the default."""
+        return next((m for p, m in self._jobs() if p == "anthropic"), DEFAULT_MODEL)
+
+    def uses_model_list(self) -> bool:
+        """True when a job is on OpenAI or OpenRouter, whose prices come from the model list."""
+        return any(p in ("openai", "openrouter") for p, _ in self._jobs())
+
     @field_validator("runs_per_day")
     @classmethod
     def _allowed_frequency(cls, v: int) -> int:
