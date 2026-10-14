@@ -1,0 +1,46 @@
+# Secrets and local config: never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Runtime data
+data/
+backups/
+logs/
+*.log
+deploys.jsonl
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Claude Code: keep shared settings, ignore personal ones (and the .tmp.* files written while
+# saving them, which would otherwise make `make deploy` refuse a "dirty" tree)
+.claude/settings.local.json*
+
+# Ops: deploy worktrees
+.deploy/
+
+# Local session handoff notes (never committed)
+*.local.md
