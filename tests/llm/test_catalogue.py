@@ -91,6 +91,19 @@ def test_a_cache_write_above_125_percent_raises_the_input_price() -> None:
     assert filter_models({"data": [entry]})[0].input_per_mtok == pytest.approx(1.0)
 
 
+def test_the_one_hour_cache_write_price_is_ignored() -> None:
+    # We only ever use the 5-minute cache, so a pricey 1-hour write must not raise the price.
+    entry = {**next(m for m in FIXTURE["data"] if m["id"] == "example/costly-cache-write")}
+    entry["pricing"] = {
+        "prompt": "0.000001",
+        "completion": "0.000002",
+        "input_cache_write": "0.00000125",
+        "input_cache_write_1h": "0.00001",
+        "overrides": [{"min_prompt_tokens": 100000, "input_cache_write_1h": "0.00002"}],
+    }
+    assert filter_models({"data": [entry]})[0].input_per_mtok == pytest.approx(1.0)
+
+
 @pytest.mark.parametrize("payload", [None, [], {"data": "nope"}, {"nodata": []}, "text"])
 def test_filter_rejects_a_malformed_payload(payload: object) -> None:
     with pytest.raises(ValueError):

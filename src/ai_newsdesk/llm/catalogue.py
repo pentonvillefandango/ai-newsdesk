@@ -94,7 +94,8 @@ def _entry(raw: object) -> CatalogueModel | None:
         return None
     # The worst case prices input as a cache write at 1.25x the input price; raise the stored
     # input price when a model's cache write costs more than that.
-    cache_write = _highest_any(pricing, "input_cache_write", "input_cache_write_1h")
+    # Only the 5-minute write: we never ask for 1-hour caching, so its price never applies.
+    cache_write = _highest_any(pricing, "input_cache_write")
     if cache_write is not None:
         prompt = max(prompt, cache_write / CACHE_WRITE_MULTIPLIER)
     name = raw.get("name")
