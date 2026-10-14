@@ -4,6 +4,7 @@ comparison and monthly caps, time limits, and the metrics (checked by hand again
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -530,6 +531,8 @@ def test_the_best_judge_is_by_label_accuracy_then_production_agreement() -> None
     unlabelled = {k: v.model_copy(update={"label": None}) for k, v in ITEMS.items()}
     rows = compare.judge_summary([B, A], unlabelled, RESULTS, threshold=4)
     assert compare.best_judge(rows) == A.key  # 2/3 agreement beats 1/2
+    twin = dataclasses.replace(rows[0], key=B.key)
+    assert compare.best_judge([rows[0], twin]) is None  # a tie names no model
     bare = {k: v.model_copy(update={"label": None, "verdict": None}) for k, v in ITEMS.items()}
     assert compare.best_judge(compare.judge_summary([A, B], bare, RESULTS, 4)) is None
 
@@ -554,6 +557,8 @@ def test_writer_summary_tallies_preferences() -> None:
     assert a.cost_usd == pytest.approx(0.02) and a.avg_latency_ms == 500
     assert compare.best_writer([a, b]) == A.key
     assert compare.best_writer(compare.writer_summary([A, B], results, {})) is None
+    tie = compare.writer_summary([A, B], results, {10: A.key, 11: B.key})
+    assert compare.best_writer(tie) is None
     rows = compare.writer_stories([A, B], [10, 11], results)
     assert [r.story_id for r in rows] == [10, 11]
     first = rows[0].texts[0]

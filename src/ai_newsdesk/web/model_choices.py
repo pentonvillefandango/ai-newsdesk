@@ -151,37 +151,54 @@ def effective_model(form: Mapping[str, str], job: str) -> str:
     return other or form.get(f"{job}_model", "").strip()
 
 
+def model_row(
+    key: str,
+    label: str,
+    hint: str,
+    providers: tuple[str, ...],
+    values: Mapping[str, str],
+    *,
+    shortlist: Shortlist,
+    prices: PriceBook,
+    optional: bool = False,
+) -> ModelRow:
+    """One row of model controls named `<key>_provider`, `<key>_model` and
+    `<key>_model_other` (Settings' jobs, the Compare page's models). `values` are saved
+    settings, or an echoed form (which has the `_model_other` key). An `optional` row's
+    provider select starts with "Not used" (value "")."""
+    provider = values.get(f"{key}_provider", "")
+    model = values.get(f"{key}_model", "")
+    groups = option_groups(providers, shortlist=shortlist, prices=prices)
+    if f"{key}_model_other" in values:
+        selected, other = model, values[f"{key}_model_other"]
+    else:
+        usable = {o.id for g in groups if g.provider == provider for o in g.options if o.usable}
+        selected, other = (model, "") if model in usable else ("", model)
+    choices = tuple((p, PROVIDER_NAMES[p]) for p in providers)
+    return ModelRow(
+        job=key,
+        label=label,
+        hint=hint,
+        providers=((("", "Not used"),) if optional else ()) + choices,
+        provider=provider,
+        groups=groups,
+        selected=selected,
+        other=other,
+    )
+
+
 def model_rows(
     values: Mapping[str, str], *, shortlist: Shortlist, prices: PriceBook
 ) -> list[ModelRow]:
-    """`values` are the saved settings, or an echoed form (which has the `_model_other` keys).
-
-    A saved model that is not a usable shortlist option goes in the text box, so saving an
-    unchanged page always posts the saved provider and model back.
-    """
-    rows: list[ModelRow] = []
-    for job in JOBS:
-        provider = values.get(f"{job.name}_provider", "")
-        model = values.get(f"{job.name}_model", "")
-        groups = option_groups(job.providers, shortlist=shortlist, prices=prices)
-        if f"{job.name}_model_other" in values:
-            selected, other = model, values[f"{job.name}_model_other"]
-        else:
-            usable = {o.id for g in groups if g.provider == provider for o in g.options if o.usable}
-            selected, other = (model, "") if model in usable else ("", model)
-        rows.append(
-            ModelRow(
-                job=job.name,
-                label=job.label,
-                hint=job.hint,
-                providers=tuple((p, PROVIDER_NAMES[p]) for p in job.providers),
-                provider=provider,
-                groups=groups,
-                selected=selected,
-                other=other,
-            )
+    """Settings' rows, one per job. A saved model that is not a usable shortlist option goes
+    in the text box, so saving an unchanged page always posts the saved provider and model
+    back."""
+    return [
+        model_row(
+            job.name, job.label, job.hint, job.providers, values, shortlist=shortlist, prices=prices
         )
-    return rows
+        for job in JOBS
+    ]
 
 
 def judge_warning(values: Mapping[str, str]) -> bool:

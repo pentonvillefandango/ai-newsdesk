@@ -335,6 +335,10 @@ async def test_dev_seed_fills_a_database(tmp_path: Path) -> None:
         assert await store.latest_briefing() is not None
         assert await store.month_spend(datetime.now(UTC), "Europe/London") > 0
         assert len(await store.last_runs(5)) == 3
+        runs = await store.compare_runs()
+        assert sorted(r.job for r in runs if r.status == "done") == ["judge", "writer"]
+        judge = next(r for r in runs if r.job == "judge" and r.status == "done")
+        assert len(judge.sample_ids) >= 5 and await store.compare_results(judge.id)
     finally:
         await store.close()
 

@@ -1,0 +1,7 @@
+<div class="compare-status" id="compare-status" role="status"{% if run.status == "running" %} hx-get="/compare/runs/{{ run.id }}/status" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+  {% if run.status == "running" %}
+  <p><span class="status status--running">Running</span> {{ done_count }} of {{ total_count }} results so far. This page updates by itself; without JavaScript, <a href="/compare/runs/{{ run.id }}">reload it</a>.</p>
+  {% else %}
+  <p><span class="status status--{{ run.status }}">{{ status_labels[run.status] }}</span> <a href="/compare/runs/{{ run.id }}">Show the results</a>.</p>
+  {% endif %}
+</div>

@@ -415,12 +415,13 @@ def judge_items(
 
 def best_judge(rows: Sequence[JudgeSummary]) -> str | None:
     """Highest accuracy against the labels; without labels, highest agreement with the
-    production judge; else none. Ties go to the first model."""
+    production judge; else none. A tie at the top names no model."""
     for rate in (lambda r: r.accuracy, lambda r: r.agree_production):
         scored = [(value, r.key) for r in rows if (value := rate(r)) is not None]
         if scored:
             best = max(value for value, _ in scored)
-            return next(key for value, key in scored if value == best)
+            top = [key for value, key in scored if value == best]
+            return top[0] if len(top) == 1 else None
     return None
 
 
@@ -464,9 +465,10 @@ def writer_summary(
 
 
 def best_writer(rows: Sequence[WriterSummary]) -> str | None:
-    """The most preferred summaries; none until the owner has preferred one."""
+    """The most preferred summaries; none until the owner has preferred one, or on a tie."""
     top = max((r.preferred for r in rows), default=0)
-    return next((r.key for r in rows if r.preferred == top), None) if top else None
+    leaders = [r.key for r in rows if r.preferred == top]
+    return leaders[0] if top and len(leaders) == 1 else None
 
 
 @dataclass(frozen=True)

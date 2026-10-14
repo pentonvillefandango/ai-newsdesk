@@ -2,6 +2,7 @@
 {% block title %}Settings on Newsdesk{% endblock %}
 {% block scripts %}<script src="/static/settings.js" defer></script>{% endblock %}
 {% block content %}
+{% from "macros/models.html" import model_fields, model_datalists %}
 {% macro aria(name, hint=false) %}{% if hint or errors.get(name) %} aria-describedby="{% if hint %}{{ name }}-hint{% endif %}{% if hint and errors.get(name) %} {% endif %}{% if errors.get(name) %}{{ name }}-error{% endif %}"{% endif %}{% if errors.get(name) %} aria-invalid="true"{% endif %}{% endmacro %}
 {% macro error(name) %}{% if errors.get(name) %}<p class="field__error" id="{{ name }}-error">{{ errors[name] }}</p>{% endif %}{% endmacro %}
 <header class="page-head">
@@ -93,55 +94,17 @@
         <div class="notice notice--warn" id="judge-warning" role="note"><p>{{ judge_warning }}</p></div>
         {% endif %}
         {% for row in model_rows %}
-        {% set p = row.job ~ "_provider" %}
-        {% set m = row.job ~ "_model" %}
-        {% set o = row.job ~ "_model_other" %}
         <fieldset class="model-row" id="model-{{ row.job }}" aria-describedby="{{ row.job }}-hint">
           <legend>{{ row.label }}</legend>
           <p class="field__hint" id="{{ row.job }}-hint">{{ row.hint }}</p>
-          <div class="model-row__fields">
-            <div class="field">
-              <label for="{{ p }}">Provider</label>
-              <select id="{{ p }}" name="{{ p }}" data-provider-for="{{ row.job }}"{{ aria(p) }}>
-                {% for value, label in row.providers %}
-                <option value="{{ value }}"{% if row.provider == value %} selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-              </select>
-              {{ error(p) }}
-            </div>
-            <div class="field">
-              <label for="{{ m }}">Model</label>
-              <select id="{{ m }}" name="{{ m }}" data-models-for="{{ row.job }}"{{ aria(m) }}>
-                <option value=""{% if not row.selected %} selected{% endif %}>Other model (type it in the next box)</option>
-                {% for g in row.groups %}
-                <optgroup label="{{ g.label }}" data-provider="{{ g.provider }}">
-                  {% for opt in g.options %}
-                  <option value="{{ opt.id }}"{% if not opt.usable %} disabled{% elif opt.id == row.selected %} selected{% endif %}>{{ opt.label }}</option>
-                  {% endfor %}
-                </optgroup>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="field">
-              <label for="{{ o }}">Other model</label>
-              <input id="{{ o }}" name="{{ o }}" type="text" list="models-{{ row.provider }}" value="{{ row.other }}" autocomplete="off" spellcheck="false" placeholder="Model id, e.g. vendor/model" data-other-for="{{ row.job }}" aria-describedby="{{ o }}-hint{% if errors.get(m) %} {{ m }}-error{% endif %}"{% if errors.get(m) %} aria-invalid="true"{% endif %}>
-              <p class="field__hint" id="{{ o }}-hint">Used instead of the list when filled in.</p>
-            </div>
-          </div>
-          {{ error(m) }}
+          {{ model_fields(row, errors) }}
           <div class="model-row__test">
             <button class="button button--quiet button--small" type="submit" formaction="/settings/models/test" name="test_job" value="{{ row.job }}" hx-post="/settings/models/test" hx-target="#test-{{ row.job }}" hx-swap="innerHTML">Test</button>
             <div class="model-row__result" id="test-{{ row.job }}" aria-live="polite">{% if model_tests.get(row.job) %}{% set t = model_tests[row.job] %}{% include "partials/model_test.html" %}{% endif %}</div>
           </div>
         </fieldset>
         {% endfor %}
-        {% for d in datalists %}
-        <datalist id="models-{{ d.provider }}">
-          {% for opt in d.options %}
-          <option value="{{ opt.id }}">{{ opt.label }}</option>
-          {% endfor %}
-        </datalist>
-        {% endfor %}
+        {{ model_datalists(datalists) }}
       </div>
     </section>
 

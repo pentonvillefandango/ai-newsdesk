@@ -25,6 +25,9 @@ def _paths(app: FastAPI, method: str) -> list[str]:
 
 
 def test_every_page_needs_a_session(app: FastAPI, anon: TestClient) -> None:
+    assert {"/compare", "/compare/runs/{run_id}", "/compare/runs/{run_id}/status"} <= set(
+        _paths(app, "GET")
+    )
     for path in _paths(app, "GET"):
         if path in OPEN_GET:
             continue
@@ -44,6 +47,13 @@ def test_every_post_needs_a_csrf_token(app: FastAPI, client: TestClient) -> None
     posts = _paths(app, "POST")
     assert "/login" in posts and "/logout" in posts
     assert {"/settings/models/test", "/settings/models/refresh"} <= set(posts)
+    assert {
+        "/compare/check",
+        "/compare/run",
+        "/compare/runs/{run_id}/label",
+        "/compare/runs/{run_id}/prefer",
+        "/compare/runs/{run_id}/use",
+    } <= set(posts)
     for path in posts:
         r = client.post(_concrete(path), data={"x": "1"}, follow_redirects=False)
         assert r.status_code == 403, path

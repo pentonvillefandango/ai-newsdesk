@@ -16,7 +16,7 @@ from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ai_newsdesk import taste
+from ai_newsdesk import compare, taste
 from ai_newsdesk.budget import Budget
 from ai_newsdesk.clock import SystemClock
 from ai_newsdesk.config import Settings
@@ -215,6 +215,8 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store = Store(settings.db_path, clock=app_clock, canonicalise=canonical_url)
         await store.init()
+        # A comparison still "running" was cut off by a restart: its page must stop polling.
+        await store.fail_running_compare_runs(app_clock.now(), compare.INTERRUPTED)
         http = httpx.AsyncClient(
             timeout=httpx.Timeout(30.0),
             headers={"User-Agent": f"ai-newsdesk/{settings.git_sha}"},
@@ -325,33 +327,45 @@ def create_app(
                 )
         return ok
 
+    @asynccontextmanager
+    async def model_pool(max_retries: int) -> AsyncIterator[Callable[[str, str], ModelClient]]:
+        """make_client over fresh SDK clients with the current keys, closed afterwards. The
+        function it yields raises UnusableModelError (a message for the owner)."""
+        deps: AppDeps = app.state.deps
+        keys = {name: await deps.api_keys.resolve_api_key(name) for name in MODEL_PROVIDERS}
+        sdks = SdkPool(keys, http_client=model_http_client, max_retries=max_retries)
+
+        def client_for(provider: str, model: str) -> ModelClient:
+            return make_client(
+                provider, model, sdks=sdks, pricebook=deps.prices, catalogue=deps.catalogue.current
+            )
+
+        try:
+            yield client_for
+        finally:
+            await sdks.aclose()
+
     def model_client(provider: str, model: str) -> AbstractAsyncContextManager[ModelClient]:
         """A one-off client for Settings' Test button, over fresh SDK clients closed after use.
         Raises UnusableModelError (a message for the owner) when the choice cannot be used."""
 
         @asynccontextmanager
         async def client() -> AsyncIterator[ModelClient]:
-            deps: AppDeps = app.state.deps
-            keys = {name: await deps.api_keys.resolve_api_key(name) for name in MODEL_PROVIDERS}
             # One attempt only: the Test holds the run lock, so it must stay short.
-            sdks = SdkPool(keys, http_client=model_http_client, max_retries=0)
-            try:
-                yield make_client(
-                    provider,
-                    model,
-                    sdks=sdks,
-                    pricebook=deps.prices,
-                    catalogue=deps.catalogue.current,
-                )
-            finally:
-                await sdks.aclose()
+            async with model_pool(0) as client_for:
+                yield client_for(provider, model)
 
         return client()
+
+    def compare_clients() -> AbstractAsyncContextManager[Callable[[str, str], ModelClient]]:
+        """Clients for one comparison (it holds the run lock: at most one retry per call)."""
+        return model_pool(compare.MAX_RETRIES)
 
     app.state.settings = settings
     app.state.rebuild_context = rebuild_context
     app.state.refresh_model_list = refresh_model_list
     app.state.model_client = model_client
+    app.state.compare_clients = compare_clients
     install_security(app, settings)
     app.include_router(build_router())
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
