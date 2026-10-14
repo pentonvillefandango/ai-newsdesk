@@ -1081,11 +1081,62 @@ code {
   gap: var(--space-7);
 }
 
+.briefing__main,
+.briefing__side {
+  min-width: 0;
+}
+
+.briefing__side {
+  display: grid;
+  gap: var(--space-7);
+  align-content: start;
+}
+
+/* Wide screens: the article keeps a reading measure on the left; the stories it covers and the
+   archive fill the rest of the wide page, as Today does. */
 @media (min-width: 64rem) {
   .briefing {
-    grid-template-columns: minmax(0, var(--measure)) 13rem;
-    column-gap: var(--space-8);
+    grid-template-columns: minmax(0, 45rem) minmax(0, 1fr);
+    column-gap: var(--space-7);
   }
+}
+
+.covered h2 {
+  font-size: var(--step-1);
+  font-style: italic;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.covered__list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+  column-gap: var(--space-5);
+}
+
+.story--compact {
+  padding-block: var(--space-3);
+}
+
+.story--compact:last-child {
+  border-bottom: 1px solid var(--rule);
+}
+
+.story.story--compact .story__meta {
+  padding-right: 0;
+  margin-bottom: var(--space-1);
+}
+
+.story--compact .story__headline {
+  font-size: var(--step-0);
+}
+
+.story__count {
+  margin-top: var(--space-1);
+  color: var(--ink-3);
+  font-size: var(--step--1);
 }
 
 .read {

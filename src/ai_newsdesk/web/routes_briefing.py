@@ -8,6 +8,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 
+from ai_newsdesk.models import Story
 from ai_newsdesk.store.records import BriefingRecord
 from ai_newsdesk.web.briefing_text import parse_briefing
 from ai_newsdesk.web.csrf import csrf_protect
@@ -31,10 +32,13 @@ async def _render(
 ) -> HTMLResponse:
     store = store_of(request)
     allowed: set[str] = set()
+    covered: list[Story] = []
     if briefing is not None and briefing.story_ids:
         # stories_by_ids returns only stories that still exist: ids merged away since the
         # briefing was written (feedback-1) are skipped, and their links render as plain text.
-        for story in (await store.stories_by_ids(briefing.story_ids)).values():
+        found = await store.stories_by_ids(briefing.story_ids)
+        covered = [found[i] for i in dict.fromkeys(briefing.story_ids) if i in found]
+        for story in covered:
             allowed.update(src.url for src in story.sources)
     return await page(
         request,
@@ -42,6 +46,7 @@ async def _render(
         {
             "active": "briefing",
             "briefing": briefing,
+            "covered": covered,
             "blocks": parse_briefing(briefing.body, allowed) if briefing is not None else [],
             "archive": await store.briefing_dates(),
             "missing": status_code == 404,
