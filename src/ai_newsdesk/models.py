@@ -187,3 +187,14 @@ class SourceOverview(BaseModel):
     items_7d: int = 0
     stories_7d: int = 0
     items_total: int = 0
+
+
+class UsageStats(BaseModel):
+    """The last few days of real activity, used for the Settings cost estimate."""
+
+    days: int
+    runs: int
+    items_reviewed: int
+    review_usd: float
+    write_usd: float
+    briefing_usd: float

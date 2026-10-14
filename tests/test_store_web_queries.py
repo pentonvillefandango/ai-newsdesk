@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from ai_newsdesk.models import ItemStatus, SourceKind, SourceResult, Trust
+import pytest
+
+from ai_newsdesk.models import (
+    ItemStatus,
+    Purpose,
+    SourceKind,
+    SourceResult,
+    Trust,
+    Usage,
+    UsageStats,
+)
 from ai_newsdesk.store import Store
 from tests.web import seed
 
@@ -116,3 +126,46 @@ async def test_source_overview_counts_items_and_reports_health(store: Store) -> 
     assert rows[muted].source.enabled is False
     assert rows[muted].items_total == 0
     assert rows[muted].last_ok_at is None
+
+
+async def test_usage_last_days(store: Store) -> None:
+    for days_ago in (0, 1, 2):
+        run_id = await store.start_run("schedule", NOW - timedelta(days=days_ago, hours=1))
+        await store.finish_run(run_id, NOW - timedelta(days=days_ago), {}, 0.0, None)
+    old = await store.start_run("schedule", NOW - timedelta(days=10))
+    await store.finish_run(old, NOW - timedelta(days=10), {}, 0.0, None)
+    src = await seed.add_source(store, name="Lab")
+    for n in (1, 2):
+        await seed.add_item(
+            store,
+            source_id=src,
+            url=f"https://lab.example/{n}",
+            title=f"T{n}",
+            at=NOW - timedelta(hours=1),
+            status=ItemStatus.REVIEWED,
+        )
+    await seed.add_item(
+        store,
+        source_id=src,
+        url="https://lab.example/3",
+        title="T3",
+        at=NOW,
+        status=ItemStatus.REVIEW_FAILED,
+    )
+
+    def usage(purpose: Purpose) -> Usage:
+        return Usage(
+            provider="anthropic", model="claude-haiku-5-5", purpose=purpose, input_tokens=10
+        )
+
+    await store.add_spend(usage(Purpose.REVIEW), 0.02, NOW - timedelta(hours=1))
+    await store.add_spend(usage(Purpose.WRITE), 0.01, NOW - timedelta(hours=1))
+    await store.add_spend(usage(Purpose.BRIEFING), 0.005, NOW - timedelta(hours=1))
+    await store.add_spend(usage(Purpose.REVIEW), 1.0, NOW - timedelta(days=9))
+
+    stats = await store.usage_last_days(NOW)
+    assert isinstance(stats, UsageStats)
+    assert (stats.days, stats.runs, stats.items_reviewed) == (7, 3, 2)
+    assert stats.review_usd == pytest.approx(0.02)
+    assert stats.write_usd == pytest.approx(0.01)
+    assert stats.briefing_usd == pytest.approx(0.005)

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from ai_newsdesk.web import routes_briefing, routes_health, routes_sources, routes_today
+from ai_newsdesk.web import (
+    routes_briefing,
+    routes_health,
+    routes_settings,
+    routes_sources,
+    routes_today,
+)
 
 
 def build_router() -> APIRouter:
@@ -14,6 +20,7 @@ def build_router() -> APIRouter:
         routes_today.router,
         routes_briefing.router,
         routes_sources.router,
+        routes_settings.router,
     ):
         router.include_router(sub)
     return router

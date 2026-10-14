@@ -1,0 +1,28 @@
+<figure class="chart-figure" aria-labelledby="spend-caption">
+  <figcaption class="chart-caption" id="spend-caption"><span>Spend per day in {{ month_label }}</span><span>Bars scale to {{ usd(chart.scale_max) }} a day</span></figcaption>
+  <svg class="chart" viewBox="0 0 {{ chart.width }} {{ chart.height }}" role="img" aria-labelledby="spend-title spend-desc">
+    <title id="spend-title">Spend per day in {{ month_label }}</title>
+    <desc id="spend-desc">{% if chart.peak %}{{ usd(chart.total) }} so far this month. Highest day: {{ short_date(chart.peak.day) }}, {{ usd(chart.peak.value) }}.{% else %}Nothing spent yet this month.{% endif %}</desc>
+    <line class="chart__grid" x1="0" x2="{{ chart.width }}" y1="0.5" y2="0.5"></line>
+    {% for bar in chart.bars %}
+    {% if bar.height > 0 %}
+    <rect class="chart__bar" x="{{ bar.x }}" y="{{ '%.2f'|format(bar.y) }}" width="{{ bar.width }}" height="{{ '%.2f'|format(bar.height) }}" rx="2"><title>{{ short_date(bar.day) }}: {{ usd(bar.value) }}</title></rect>
+    {% else %}
+    <rect class="chart__zero" x="{{ bar.x }}" y="{{ chart.height - 1 }}" width="{{ bar.width }}" height="1"><title>{{ short_date(bar.day) }}: nothing spent</title></rect>
+    {% endif %}
+    {% endfor %}
+    <line class="chart__axis" x1="0" x2="{{ chart.width }}" y1="{{ chart.height - 0.5 }}" y2="{{ chart.height - 0.5 }}"></line>
+  </svg>
+  <div class="chart-axis" aria-hidden="true"><span>{{ short_date(chart.bars[0].day) }}</span><span>{{ short_date(chart.bars[-1].day) }}</span></div>
+  <details class="more">
+    <summary>Show as a table</summary>
+    <table class="table">
+      <thead><tr><th scope="col">Day</th><th scope="col">Spend</th></tr></thead>
+      <tbody>
+        {% for bar in chart.bars %}
+        <tr><td>{{ short_date(bar.day) }}</td><td>{{ usd(bar.value) }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+</figure>

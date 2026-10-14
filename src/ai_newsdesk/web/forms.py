@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from ai_newsdesk.models import SourceConfig, SourceKind, Trust
+from ai_newsdesk.web.estimate import RUNS_PER_DAY_OPTIONS
 
 ConfigValue = str | int | float | bool | list[str]
 
@@ -111,3 +114,87 @@ def parse_source_form(
         config=config,
         errors=errors,
     )
+
+
+BRIEFING_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+JUDGE_PROVIDERS = ("anthropic", "typesafe")
+
+
+@dataclass
+class SettingsForm:
+    values: dict[str, object] = field(default_factory=dict)
+    errors: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
+
+
+def parse_settings_form(
+    form: Mapping[str, str], *, models_by_provider: Mapping[str, set[str]]
+) -> SettingsForm:
+    """Validate the runtime-settings form. ``values`` holds typed values for valid fields only."""
+    result = SettingsForm()
+    values, errors = result.values, result.errors
+
+    def integer(key: str, low: int, high: int, message: str) -> None:
+        try:
+            number = int(form.get(key, "").strip())
+        except ValueError:
+            errors[key] = message
+            return
+        if low <= number <= high:
+            values[key] = number
+        else:
+            errors[key] = message
+
+    try:
+        runs = int(form.get("runs_per_day", ""))
+    except ValueError:
+        runs = -1
+    if runs in RUNS_PER_DAY_OPTIONS:
+        values["runs_per_day"] = runs
+    else:
+        errors["runs_per_day"] = "Choose one of the listed frequencies."
+
+    briefing_time = form.get("briefing_time", "").strip()
+    if BRIEFING_TIME_RE.match(briefing_time):
+        values["briefing_time"] = briefing_time
+    else:
+        errors["briefing_time"] = "Use the 24-hour form HH:MM, for example 07:00."
+
+    integer("daily_review_cap", 0, 5000, "Enter a whole number from 0 to 5000.")
+
+    try:
+        budget = float(form.get("monthly_budget_usd", "").strip())
+    except ValueError:
+        budget = math.nan
+    if math.isfinite(budget) and 0 <= budget <= 100:
+        values["monthly_budget_usd"] = round(budget, 2)
+    else:
+        errors["monthly_budget_usd"] = "Enter an amount from 0 to 100 dollars."
+
+    integer("show_threshold", 0, 10, "Enter a whole number from 0 to 10.")
+    integer("hn_min_points", 0, 10000, "Enter a whole number from 0 to 10000.")
+
+    provider = form.get("judge_provider", "")
+    if provider in JUDGE_PROVIDERS:
+        values["judge_provider"] = provider
+        judge_model = form.get("judge_model", "")
+        if judge_model in models_by_provider.get(provider, set()):
+            values["judge_model"] = judge_model
+        else:
+            errors["judge_model"] = "Choose a model that the selected judge provider offers."
+    else:
+        errors["judge_provider"] = "Choose a judge provider."
+
+    claude_models = models_by_provider.get("anthropic", set())
+    for key in ("writer_model", "briefing_model"):
+        model = form.get(key, "")
+        if model in claude_models:
+            values[key] = model
+        else:
+            errors[key] = "Choose a Claude model from the list."
+
+    values["why_it_matters"] = form.get("why_it_matters") == "on"
+    return result

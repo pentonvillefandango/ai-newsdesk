@@ -39,6 +39,7 @@ from ai_newsdesk.models import (
     Trust,
     UnscoredItem,
     Usage,
+    UsageStats,
     Verdict,
     WriteInput,
 )
@@ -870,6 +871,34 @@ class Store:
             day = _req_dt(r["at"]).astimezone(zone).date()
             totals[day] = totals.get(day, 0.0) + r["cost_usd"]
         return [(day.isoformat(), round(total, 6)) for day, total in sorted(totals.items())]
+
+    async def usage_last_days(self, now: dt.datetime, days: int = 7) -> UsageStats:
+        """Finished runs, reviewed items and spend by purpose over the last ``days`` days."""
+        since = _ts(now - dt.timedelta(days=days))
+        runs = await self._one(
+            "SELECT COUNT(*) AS n FROM runs WHERE started_at >= ? AND finished_at IS NOT NULL",
+            (since,),
+        )
+        reviewed = await self._one(
+            "SELECT COUNT(*) AS n FROM items WHERE status = 'reviewed' AND fetched_at >= ?",
+            (since,),
+        )
+        by_purpose = {
+            str(r["purpose"]): float(r["usd"])
+            for r in await self._all(
+                "SELECT purpose, COALESCE(SUM(cost_usd), 0) AS usd FROM spend"
+                " WHERE at >= ? GROUP BY purpose",
+                (since,),
+            )
+        }
+        return UsageStats(
+            days=days,
+            runs=int(runs["n"]) if runs is not None else 0,
+            items_reviewed=int(reviewed["n"]) if reviewed is not None else 0,
+            review_usd=by_purpose.get("review", 0.0),
+            write_usd=by_purpose.get("write", 0.0),
+            briefing_usd=by_purpose.get("briefing", 0.0),
+        )
 
     # ---- runs ------------------------------------------------------------------------
 

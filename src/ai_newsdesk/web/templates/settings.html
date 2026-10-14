@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block title %}Settings on Newsdesk{% endblock %}
+{% block content %}
+{% macro aria(name, hint=false) %}{% if hint or errors.get(name) %} aria-describedby="{% if hint %}{{ name }}-hint{% endif %}{% if hint and errors.get(name) %} {% endif %}{% if errors.get(name) %}{{ name }}-error{% endif %}"{% endif %}{% if errors.get(name) %} aria-invalid="true"{% endif %}{% endmacro %}
+{% macro error(name) %}{% if errors.get(name) %}<p class="field__error" id="{{ name }}-error">{{ errors[name] }}</p>{% endif %}{% endmacro %}
+<header class="page-head">
+  <h1>Settings</h1>
+  <p class="lede">How often the desk reads, how much it may spend, and which models do the work.</p>
+</header>
+{% if flash %}
+<div class="notice notice--ok" role="status"><p>{{ flash }}</p></div>
+{% endif %}
+{% if errors %}
+<div class="notice notice--error" role="alert"><p>Nothing was saved. Fix the {{ "field" if errors|length == 1 else errors|length ~ " fields" }} marked below.</p></div>
+{% endif %}
+<div class="settings">
+  <form class="settings" method="post" action="/settings">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <section class="panel" id="schedule" aria-labelledby="schedule-title">
+      <div class="panel__head">
+        <h2 id="schedule-title">Schedule</h2>
+        <p>Each run collects every source, reviews what is new and writes the summaries.</p>
+      </div>
+      <div class="panel__body">
+        <div class="field">
+          <label for="runs_per_day">Update frequency</label>
+          <select id="runs_per_day" name="runs_per_day"{{ aria("runs_per_day", true) }}>
+            {% for opt in frequency_options %}
+            <option value="{{ opt.runs }}"{% if values.runs_per_day == opt.runs|string %} selected{% endif %}>{{ opt.label }}, about {{ usd(opt.monthly) }} a month{% if opt.over_budget %} (over budget){% endif %}</option>
+            {% endfor %}
+          </select>
+          <p class="field__hint" id="runs_per_day-hint">{% if rates.from_history %}Estimates use the last 7 days: about {{ rates.items_per_run|round|int }} items reviewed a run.{% else %}Estimates use starting figures until there are a few days of history.{% endif %}</p>
+          {{ error("runs_per_day") }}
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="briefing_time">Briefing time</label>
+            <input id="briefing_time" name="briefing_time" type="time" value="{{ values.briefing_time }}" required{{ aria("briefing_time", true) }}>
+            <p class="field__hint" id="briefing_time-hint">Local time, every morning.</p>
+            {{ error("briefing_time") }}
+          </div>
+          <div class="field">
+            <label for="daily_review_cap">Daily review cap</label>
+            <input id="daily_review_cap" name="daily_review_cap" type="number" min="0" max="5000" step="1" inputmode="numeric" value="{{ values.daily_review_cap }}" required{{ aria("daily_review_cap", true) }}>
+            <p class="field__hint" id="daily_review_cap-hint">Most items the model reviews in a day.</p>
+            {{ error("daily_review_cap") }}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="spending" aria-labelledby="spending-title">
+      <div class="panel__head">
+        <h2 id="spending-title">Spending</h2>
+        <p>A hard cap. Every model call is checked against it first; a call that might not fit is skipped.</p>
+      </div>
+      <div class="panel__body">
+        <div class="meter{% if over_budget %} meter--over{% endif %}">
+          <p class="meter__figures"><span class="meter__spent">{{ usd(spent) }}</span><span class="meter__of">of {{ usd(runtime.monthly_budget_usd) }} spent in {{ month_label }}</span></p>
+          <svg class="meter__bar" viewBox="0 0 100 4" preserveAspectRatio="none" role="img" aria-label="{{ spent_pct|round|int }} percent of this month's budget used">
+            <rect class="meter__track" width="100" height="4"></rect>
+            <rect class="meter__fill" width="{{ '%.2f'|format(spent_pct) }}" height="4"></rect>
+          </svg>
+        </div>
+        <div class="field">
+          <label for="monthly_budget_usd">Monthly budget in dollars</label>
+          <input id="monthly_budget_usd" name="monthly_budget_usd" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="{{ values.monthly_budget_usd }}" required{{ aria("monthly_budget_usd", true) }}>
+          <p class="field__hint" id="monthly_budget_usd-hint">Covers every provider. Resets on the 1st, UK time.</p>
+          {{ error("monthly_budget_usd") }}
+        </div>
+        {% include "partials/spend_chart.html" %}
+      </div>
+    </section>
+
+    <section class="panel" id="models" aria-labelledby="models-title">
+      <div class="panel__head">
+        <h2 id="models-title">Models</h2>
+        <p>Prices come from config/pricing.yaml. Changes apply from the next run.</p>
+      </div>
+      <div class="panel__body">
+        <div class="field">
+          <label for="judge_provider">Judge</label>
+          <select id="judge_provider" name="judge_provider"{{ aria("judge_provider") }}>
+            <option value="anthropic"{% if values.judge_provider == "anthropic" %} selected{% endif %}>Claude (Anthropic)</option>
+            <option value="typesafe"{% if values.judge_provider == "typesafe" %} selected{% endif %}>Jev (TypeSafe)</option>
+          </select>
+          {{ error("judge_provider") }}
+        </div>
+        <div class="field">
+          <label for="judge_model">Judge model</label>
+          <select id="judge_model" name="judge_model"{{ aria("judge_model") }}>
+            {% for m in models %}
+            <option value="{{ m.id }}"{% if values.judge_model == m.id %} selected{% endif %}>{{ m.label }}</option>
+            {% endfor %}
+          </select>
+          {{ error("judge_model") }}
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="writer_model">Summary writer</label>
+            <select id="writer_model" name="writer_model"{{ aria("writer_model") }}>
+              {% for m in models if m.provider == "anthropic" %}
+              <option value="{{ m.id }}"{% if values.writer_model == m.id %} selected{% endif %}>{{ m.label }}</option>
+              {% endfor %}
+            </select>
+            {{ error("writer_model") }}
+          </div>
+          <div class="field">
+            <label for="briefing_model">Briefing writer</label>
+            <select id="briefing_model" name="briefing_model"{{ aria("briefing_model") }}>
+              {% for m in models if m.provider == "anthropic" %}
+              <option value="{{ m.id }}"{% if values.briefing_model == m.id %} selected{% endif %}>{{ m.label }}</option>
+              {% endfor %}
+            </select>
+            {{ error("briefing_model") }}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="reading" aria-labelledby="reading-title">
+      <div class="panel__head">
+        <h2 id="reading-title">Reading</h2>
+        <p>What reaches the Today page.</p>
+      </div>
+      <div class="panel__body">
+        <div class="check">
+          <input id="why_it_matters" name="why_it_matters" type="checkbox"{% if values.why_it_matters == "on" %} checked{% endif %} aria-describedby="why_it_matters-hint">
+          <div>
+            <label for="why_it_matters">Write "why it matters"</label>
+            <p class="field__hint" id="why_it_matters-hint">One extra sentence per story. Off saves output tokens; lines already written come back if you turn it on again.</p>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="show_threshold">Show stories scoring at least</label>
+            <input id="show_threshold" name="show_threshold" type="number" min="0" max="10" step="1" inputmode="numeric" value="{{ values.show_threshold }}" required{{ aria("show_threshold", true) }}>
+            <p class="field__hint" id="show_threshold-hint">Out of 10. 4 was the best balance in testing.</p>
+            {{ error("show_threshold") }}
+          </div>
+          <div class="field">
+            <label for="hn_min_points">Hacker News points needed</label>
+            <input id="hn_min_points" name="hn_min_points" type="number" min="0" max="10000" step="1" inputmode="numeric" value="{{ values.hn_min_points }}" required{{ aria("hn_min_points") }}>
+            {{ error("hn_min_points") }}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="form__actions">
+      <button class="button" type="submit">Save settings</button>
+    </div>
+  </form>
+
+  <section class="panel" id="keys" aria-labelledby="keys-title">
+    <div class="panel__head">
+      <h2 id="keys-title">API keys</h2>
+      <p>Keys are tested before they are saved, stored encrypted, and never shown again. A key saved here wins over the one in .env.</p>
+    </div>
+    <div class="panel__body">
+      {% for k in keys %}
+      {% set label = key_labels[k.name] %}
+      <div class="key" id="key-{{ k.name }}">
+        <div class="key__head">
+          <h3>{{ label }}</h3>
+          <span class="tag{% if k.is_set %} tag--ok{% endif %}">{{ "Set" if k.is_set else "Not set" }}</span>
+        </div>
+        <p class="field__hint">{% if k.set_in_ui %}Saved here {{ ago(k.updated_at, now) }}.{% elif k.set_in_env %}Using the value from .env.{% else %}No key here or in .env.{% endif %}</p>
+        <form class="key__form" method="post" action="/settings/keys/{{ k.name }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label class="visually-hidden" for="key-input-{{ k.name }}">New {{ label }} key</label>
+          <input id="key-input-{{ k.name }}" name="key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste a new key"{% if key_errors.get(k.name) %} aria-invalid="true" aria-describedby="key-error-{{ k.name }}"{% endif %}>
+          <button class="button" type="submit">Test and save</button>
+        </form>
+        {% if key_errors.get(k.name) %}
+        <p class="field__error" id="key-error-{{ k.name }}" role="alert">Not saved. {{ key_errors[k.name] }}</p>
+        {% endif %}
+        {% if k.set_in_ui %}
+        <form method="post" action="/settings/keys/{{ k.name }}/clear">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="link-button" type="submit">Clear and use .env</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="panel" id="run" aria-labelledby="run-title">
+    <div class="panel__head">
+      <h2 id="run-title">Run now</h2>
+      <p>Collect and review straight away instead of waiting for the next slot. Runs never overlap.</p>
+    </div>
+    <div class="panel__body">
+      {% if run_flash %}
+      <div class="notice notice--ok" role="status"><p>{{ run_flash }}</p></div>
+      {% endif %}
+      <form method="post" action="/settings/refresh">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="button" type="submit"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-refresh"></use></svg>Refresh now</button>
+      </form>
+      {% if runs %}
+      <ul class="runs" aria-label="Recent runs">
+        {% for r in runs %}
+        <li>
+          <time datetime="{{ r.started_at }}">{{ ago(r.started, now) }}</time>
+          <span>{{ r.trigger }}</span>
+          <span>{{ usd(r.cost_usd or 0) }}</span>
+          {% if r.error %}<span class="error">{{ r.error|truncate(160, true) }}</span>{% elif not r.finished_at %}<span>running</span>{% else %}<span>finished</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}
