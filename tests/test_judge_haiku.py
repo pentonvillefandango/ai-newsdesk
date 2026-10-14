@@ -1,9 +1,14 @@
 import json
 from pathlib import Path
 
-from ai_newsdesk.claude_common import safe_json
+from ai_newsdesk.claude_common import (
+    SCHEMA_OVERHEAD_TOKENS,
+    estimate_tokens,
+    safe_json,
+    worst_case_usd,
+)
 from ai_newsdesk.judges.haiku import BatchJudgement, CategoryName, HaikuJudge, ItemJudgement
-from ai_newsdesk.judges.prompts import JUDGE_SYSTEM, NO_TEXT
+from ai_newsdesk.judges.prompts import JUDGE_SYSTEM, NO_TEXT, render_items
 from ai_newsdesk.models import Category, Purpose, ReviewInput, SourceKind, StoryRef, Trust
 from ai_newsdesk.pricing import Pricing
 from tests.fake_anthropic import (
@@ -191,3 +196,34 @@ def test_worst_case_cost_covers_max_tokens_per_batch() -> None:
 def test_system_prompt_states_the_rules() -> None:
     for phrase in ("untrusted data", "same_story_id", "story_candidates", "junk", "0-10"):
         assert phrase in JUDGE_SYSTEM
+
+
+def test_estimate_tokens_is_a_utf8_byte_upper_bound() -> None:
+    assert estimate_tokens("hello") == 5
+    assert estimate_tokens("日本語") == 9
+    assert estimate_tokens("\U0001f600") == 4
+    assert estimate_tokens("") == 0
+
+
+def test_worst_case_usd_prices_everything_at_cache_write_rate() -> None:
+    # 1,000,000 input tokens at $0.10/Mtok x 1.25 + 4000 output at $0.50/Mtok
+    expected = 0.10 * 1.25 + 4000 * 0.50 / 1_000_000
+    assert abs(worst_case_usd(PRICING, MODEL, 1_000_000, 4000) - expected) < 1e-12
+
+
+def test_worst_case_cost_is_an_absolute_bound_with_cache_premium() -> None:
+    judge = judge_for(FakeAnthropic([]))
+    batch = [inp(1)]
+    tokens = estimate_tokens(JUDGE_SYSTEM + render_items(batch)) + SCHEMA_OVERHEAD_TOKENS
+    expected = tokens * 0.10 * 1.25 / 1_000_000 + 4000 * 0.50 / 1_000_000
+    assert abs(judge.worst_case_cost(batch) - expected) < 1e-12
+    assert judge.worst_case_cost(batch) > PRICING.cost(MODEL, tokens, 4000)
+
+
+def test_worst_case_cost_rises_for_cjk_and_emoji_text() -> None:
+    judge = judge_for(FakeAnthropic([]))
+    ascii_cost = judge.worst_case_cost([inp(1, text="a" * 1000)])
+    cjk_cost = judge.worst_case_cost([inp(1, text="日" * 1000)])
+    emoji_cost = judge.worst_case_cost([inp(1, text="\U0001f600" * 1000)])
+    assert cjk_cost > ascii_cost
+    assert emoji_cost > cjk_cost

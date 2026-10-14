@@ -13,6 +13,7 @@ from ai_newsdesk.claude_common import (
     describe_error,
     estimate_tokens,
     usage_from_response,
+    worst_case_usd,
 )
 from ai_newsdesk.judges.prompts import JUDGE_SYSTEM, render_items
 from ai_newsdesk.models import Category, JudgeResult, Purpose, ReviewInput, Usage, Verdict
@@ -68,7 +69,7 @@ class HaikuJudge:
         total = 0.0
         for batch in self._batches(inputs):
             tokens = estimate_tokens(JUDGE_SYSTEM + render_items(batch)) + SCHEMA_OVERHEAD_TOKENS
-            total += self._pricing.cost(self.model, tokens, self.max_tokens)
+            total += worst_case_usd(self._pricing, self.model, tokens, self.max_tokens)
         return total
 
     async def review(self, inputs: list[ReviewInput]) -> JudgeResult:

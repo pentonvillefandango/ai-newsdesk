@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 import json
-import math
 from typing import Any
 
 import anthropic
 
 from ai_newsdesk.models import Purpose, Usage
+from ai_newsdesk.pricing import Pricing
 
 # Structured output adds a schema-derived preamble to the input; count it generously.
 SCHEMA_OVERHEAD_TOKENS = 600
 
 
 def estimate_tokens(text: str) -> int:
-    """Pessimistic token estimate (2 characters per token) for budget pre-checks."""
-    return math.ceil(len(text) / 2) + 1
+    """Upper bound on tokens for budget checks: a token covers at least one UTF-8 byte."""
+    return len(text.encode("utf-8"))
+
+
+def worst_case_usd(pricing: Pricing, model: str, input_tokens: int, max_tokens: int) -> float:
+    """Upper bound for one call: all input at the highest input rate (cache write, 1.25x)."""
+    return pricing.cost(model, 0, max_tokens, cache_write_tokens=input_tokens)
 
 
 def safe_json(payload: object) -> str:
