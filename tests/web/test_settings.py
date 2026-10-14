@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -304,3 +304,21 @@ def test_a_crashing_key_tester_never_leaks_the_key(app: FastAPI, client: TestCli
     assert SECRET not in r.text
     assert "The test call failed (RuntimeError)." in r.text
     assert run(client, app.state.store.get_setting, "secret.anthropic") is None
+
+
+async def test_dev_seed_fills_a_database(tmp_path: Path) -> None:
+    from ai_newsdesk.store import Store
+    from tests.web import dev_seed
+
+    db = tmp_path / "dev.sqlite"
+    await dev_seed.main(str(db))
+    store = Store(str(db))
+    await store.init()
+    try:
+        stories = await store.today_stories(datetime.now(UTC), 0)
+        assert len(stories) >= 1
+        assert await store.latest_briefing() is not None
+        assert await store.month_spend(datetime.now(UTC), "Europe/London") > 0
+        assert len(await store.last_runs(5)) == 3
+    finally:
+        await store.close()
