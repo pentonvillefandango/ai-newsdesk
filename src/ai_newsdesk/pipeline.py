@@ -281,13 +281,13 @@ async def _review(
     unsent = await _judge_all(ctx, inputs, verdicts, failed, report)
     report.counts["budget_skipped"] = len(unsent)
 
-    weights = {s.name: s.weight for s in await ctx.store.list_sources(enabled_only=False)}
+    weights = {(s.kind, s.name): s.weight for s in await ctx.store.list_sources(enabled_only=False)}
     failed_ids = {f.item_id for f in failed}
     judged: list[cluster.Judged] = []
     for inp in inputs:
         verdict = verdicts.get(inp.item_id)
         if verdict is not None:
-            signal = stored_signal(verdict, weights.get(inp.source_name, 1.0))
+            signal = stored_signal(verdict, weights.get((inp.source_kind, inp.source_name), 1.0))
             await ctx.store.save_verdict(verdict, signal)
             judged.append(cluster.Judged(inp, verdict, signal))
         elif inp.item_id in failed_ids:

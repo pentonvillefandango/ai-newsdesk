@@ -370,3 +370,34 @@ async def test_story_the_writer_leaves_out_is_marked_and_offered_again(store: St
     clock.advance(hours=6)
     await run_once(ctx, "test")
     assert len(writer.story_calls) == 2  # MAX_TEXT_ATTEMPTS reached: no third attempt
+
+
+async def test_same_name_sources_of_different_kinds_use_their_own_weight(store: Store) -> None:
+    feed = await add_source(store, "Anthropic", kind=SourceKind.FEED, weight=1.6)
+    search = await add_source(
+        store,
+        "Anthropic",
+        kind=SourceKind.SEARCH,
+        weight=0.8,
+        config={"query": "anthropic"},
+    )
+    feeds, searches = ScriptedSource(SourceKind.FEED), ScriptedSource(SourceKind.SEARCH)
+    feeds.by_source[feed.id] = [
+        candidate(feed.id, "Alpha lab ships robot arm", "https://a.example/1")
+    ]
+    searches.by_source[search.id] = [
+        candidate(search.id, "Zeta startup opens data centre", "https://b.example/2")
+    ]
+    ctx = make_ctx(
+        store,
+        MutableClock(NOW),
+        sources={SourceKind.FEED: feeds, SourceKind.SEARCH: searches},
+        judge=scripted_judge(),
+    )
+    report = await run_once(ctx, "test")
+    assert report.error is None
+    scores = {s.headline: s.score for s in await store.today_stories(NOW, 4)}
+    assert scores == {
+        "Alpha lab ships robot arm": 8.0,  # 5 x 1.6
+        "Zeta startup opens data centre": 4.0,  # 5 x 0.8
+    }
