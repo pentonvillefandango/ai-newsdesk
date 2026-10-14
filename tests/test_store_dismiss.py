@@ -62,7 +62,7 @@ async def _dismissed_at(store: Store, table: str, row_id: int) -> str | None:
 async def test_migration_adds_dismissed_at_to_stories_and_items(db_path: str) -> None:
     conn = await connect(db_path)
     try:
-        assert await apply_migrations(conn) == [1, 2, 3, 4]
+        assert await apply_migrations(conn) == [1, 2, 3, 4, 5]
         assert await apply_migrations(conn) == []
         for table in ("stories", "items"):
             async with conn.execute(f"PRAGMA table_info({table})") as cur:

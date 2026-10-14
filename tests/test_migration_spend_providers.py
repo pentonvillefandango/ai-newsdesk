@@ -35,7 +35,7 @@ async def test_existing_spend_survives_and_new_providers_are_accepted(
                 INSERT, ("2026-10-03T00:00:00+00:00", "gpt-x", "openrouter", "review", 0.1)
             )
 
-        assert await apply_migrations(conn) == [4]
+        assert await apply_migrations(conn) == [4, 5]
 
         async with conn.execute(
             "SELECT id, at, model, provider, purpose, input_tokens, output_tokens,"
