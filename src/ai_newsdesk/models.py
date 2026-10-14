@@ -115,13 +115,15 @@ class ConsolidationStory(BaseModel):
 
 
 class Usage(BaseModel):
-    provider: str  # "anthropic" | "typesafe"
+    provider: str  # "anthropic" | "typesafe" | "openai" | "openrouter"
     model: str
     purpose: Purpose
-    input_tokens: int
+    input_tokens: int  # excludes cached tokens (cache_read_tokens / cache_write_tokens)
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    # What the provider says the call cost (OpenRouter's usage.cost); preferred over our price.
+    reported_cost_usd: float | None = None
 
 
 class JudgeResult(BaseModel):
