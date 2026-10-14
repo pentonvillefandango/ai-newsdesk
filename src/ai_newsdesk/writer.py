@@ -75,7 +75,9 @@ class LLMWriter:
     ) -> None:
         self.client = client
         self.briefing_client = briefing_client
+        self.provider = client.provider
         self.model = client.model
+        self.briefing_provider = briefing_client.provider
         self.briefing_model = briefing_client.model
         self.batch_size = batch_size
         self.max_tokens = max_tokens

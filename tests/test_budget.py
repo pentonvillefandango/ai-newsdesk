@@ -185,3 +185,19 @@ async def test_record_persists_an_openrouter_call(store: Store) -> None:
     assert cost == pytest.approx(0.2)
     assert await store.month_spend(NOW, TZ) == pytest.approx(0.2)
     assert budget.remaining_month() == pytest.approx(4.8)
+
+
+async def test_an_abandoned_call_is_recorded_at_its_worst_case(store: Store) -> None:
+    """A call we gave up on (timed out or cancelled) may still be billed: its worst case is
+    recorded as a cost-only row, so the meter can over-count but never under-count."""
+    budget = make(store, monthly_budget_usd=5.0)
+    await budget.refresh()
+    cost = await budget.record_abandoned("openrouter", "x/unpriced", Purpose.WRITE, 0.25)
+    assert cost == pytest.approx(0.25)
+    row = await store._one(
+        "SELECT provider, model, purpose, input_tokens, output_tokens, cost_usd FROM spend"
+    )
+    assert row is not None
+    assert tuple(row) == ("openrouter", "x/unpriced", "write", 0, 0, pytest.approx(0.25))
+    assert await store.month_spend(NOW, TZ) == pytest.approx(0.25)
+    assert budget.remaining_month() == pytest.approx(4.75)

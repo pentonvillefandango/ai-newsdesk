@@ -1,14 +1,36 @@
 import asyncio
+from collections.abc import Coroutine
 from datetime import UTC, date, datetime
+from typing import Any
 
 import pytest
 
 from ai_newsdesk import pipeline
-from ai_newsdesk.models import Category, SourceConfig, SourceKind, SourceResult, Trust, Verdict
+from ai_newsdesk.models import (
+    BriefingStory,
+    Category,
+    JudgeResult,
+    ReviewInput,
+    SourceConfig,
+    SourceKind,
+    SourceResult,
+    StoryText,
+    Trust,
+    Usage,
+    Verdict,
+    WriteInput,
+)
 from ai_newsdesk.pipeline import COUNT_KEYS, run_briefing, run_once, stored_signal
 from ai_newsdesk.protocols import Source
 from ai_newsdesk.store.store import Store
-from tests.pipeline_ctx import RecordingWriter, ScriptedJudge, ScriptedSource, candidate, make_ctx
+from tests.pipeline_ctx import (
+    MODEL,
+    RecordingWriter,
+    ScriptedJudge,
+    ScriptedSource,
+    candidate,
+    make_ctx,
+)
 from tests.pipeline_helpers import MutableClock, add_source
 
 NOW = datetime(2026, 10, 14, 11, 0, tzinfo=UTC)
@@ -485,3 +507,111 @@ async def test_cancelled_run_is_finished_with_error_cancelled(store: Store) -> N
     [run] = await store.last_runs(1)
     assert run.finished_at is not None
     assert run.error == "cancelled"
+
+
+class HangingJudge(ScriptedJudge):
+    """Signals that the call started, then never answers."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+
+    async def review(self, inputs: list[ReviewInput]) -> JudgeResult:
+        self.calls.append(list(inputs))
+        self.started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+class HangingWriter(RecordingWriter):
+    """Writes stories as usual (`hang_stories` off) and never answers the briefing."""
+
+    def __init__(self, *, hang_stories: bool) -> None:
+        super().__init__()
+        self.hang_stories = hang_stories
+        self.started = asyncio.Event()
+
+    async def write_stories(self, inputs: list[WriteInput]) -> tuple[list[StoryText], list[Usage]]:
+        if not self.hang_stories:
+            return await super().write_stories(inputs)
+        self.started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def write_briefing(
+        self, stories: list[BriefingStory], date_label: str
+    ) -> tuple[str | None, list[Usage]]:
+        self.started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+async def spend_rows(store: Store) -> list[tuple[object, ...]]:
+    rows = await store._all("SELECT provider, model, purpose, cost_usd FROM spend ORDER BY id")
+    return [tuple(r) for r in rows]
+
+
+async def _cancel_when_started(started: asyncio.Event, coro: Coroutine[Any, Any, object]) -> None:
+    task = asyncio.create_task(coro)
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_a_judge_call_cut_off_by_shutdown_is_recorded_at_its_worst_case(
+    store: Store,
+) -> None:
+    feeds, searches, _, _ = await two_source_setup(store)
+    judge = HangingJudge()
+    ctx = make_ctx(
+        store,
+        MutableClock(NOW),
+        sources={SourceKind.FEED: feeds, SourceKind.SEARCH: searches},
+        judge=judge,
+    )
+    await _cancel_when_started(judge.started, run_once(ctx, "test"))
+    worst = judge.worst_case_cost(judge.calls[0])
+    assert await spend_rows(store) == [("anthropic", MODEL, "review", pytest.approx(worst))]
+    [run] = await store.last_runs(1)
+    assert run.error == "cancelled" and run.cost_usd == pytest.approx(worst)
+    assert ctx.budget.remaining_month() == pytest.approx(5.0 - worst)
+
+
+async def test_a_writer_call_cut_off_by_shutdown_is_recorded_at_its_worst_case(
+    store: Store,
+) -> None:
+    feeds, searches, _, _ = await two_source_setup(store)
+    writer = HangingWriter(hang_stories=True)
+    ctx = make_ctx(
+        store,
+        MutableClock(NOW),
+        sources={SourceKind.FEED: feeds, SourceKind.SEARCH: searches},
+        judge=scripted_judge(),
+        writer=writer,
+    )
+    await _cancel_when_started(writer.started, run_once(ctx, "test"))
+    rows = await spend_rows(store)
+    assert [r[2] for r in rows] == ["review", "write"]
+    assert rows[1] == ("anthropic", MODEL, "write", pytest.approx(0.001))  # one story's worst
+    [run] = await store.last_runs(1)
+    assert run.cost_usd == pytest.approx(sum(float(str(r[3])) for r in rows))
+
+
+async def test_a_briefing_call_cut_off_by_shutdown_is_recorded_at_its_worst_case(
+    store: Store,
+) -> None:
+    feeds, searches, _, _ = await two_source_setup(store)
+    ctx = make_ctx(
+        store,
+        MutableClock(NOW),
+        sources={SourceKind.FEED: feeds, SourceKind.SEARCH: searches},
+        judge=scripted_judge(),
+    )
+    await run_once(ctx, "test")
+    before = len(await spend_rows(store))
+    writer = HangingWriter(hang_stories=False)
+    ctx.writer = writer
+    await _cancel_when_started(writer.started, run_briefing(ctx, date(2026, 10, 14)))
+    rows = await spend_rows(store)
+    assert rows[before:] == [("anthropic", MODEL, "briefing", pytest.approx(0.002))]

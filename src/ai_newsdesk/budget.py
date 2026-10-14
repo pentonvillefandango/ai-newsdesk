@@ -3,6 +3,8 @@
 
 Every AI call is checked with can_afford(worst_case) first and recorded with record(usage)
 after. Because worst_case >= actual for every call, recorded spend can never pass the cap.
+A call we abandon (our timeout, or a cancel at shutdown) may still be billed, so it is
+recorded at its worst case (record_abandoned): the meter can over-count but never under-count.
 """
 
 from __future__ import annotations
@@ -10,13 +12,24 @@ from __future__ import annotations
 import logging
 
 from ai_newsdesk.llm.prices import PriceBook
-from ai_newsdesk.models import Usage
+from ai_newsdesk.models import Purpose, Usage
 from ai_newsdesk.pricing import Pricing
 from ai_newsdesk.protocols import Clock
 from ai_newsdesk.runtime_settings import RuntimeSettings
 from ai_newsdesk.store.store import Store
 
 log = logging.getLogger(__name__)
+
+
+def abandoned_usage(provider: str, model: str, purpose: Purpose, worst_case_usd: float) -> Usage:
+    """The spend row for a call we gave up on: no tokens are known, so it costs its worst case."""
+    return Usage(
+        provider=provider,
+        model=model,
+        purpose=purpose,
+        input_tokens=0,
+        reported_cost_usd=worst_case_usd,
+    )
 
 
 class Budget:
@@ -76,6 +89,11 @@ class Budget:
         await self.store.add_spend(usage, cost, self.clock.now())
         self._spent += cost
         return cost
+
+    async def record_abandoned(
+        self, provider: str, model: str, purpose: Purpose, worst_case_usd: float
+    ) -> float:
+        return await self.record(abandoned_usage(provider, model, purpose, worst_case_usd))
 
     def note_reviewed(self, n: int) -> None:
         self._reviewed += max(0, n)

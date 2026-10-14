@@ -169,6 +169,7 @@ class FakeJudge:
         match_first_candidate: bool = False,
         cost_per_item: float = 0.001,
     ) -> None:
+        self.provider = "anthropic"
         self.model = model
         self.verdicts = verdicts or {}
         self.fail_ids = fail_ids or set()
@@ -233,7 +234,8 @@ class FakeWriter:
         cost_per_story: float = 0.001,
         briefing_cost: float = 0.002,
     ) -> None:
-        self.model = model
+        self.provider = self.briefing_provider = "anthropic"
+        self.model = self.briefing_model = model
         self.fail_story_ids = fail_story_ids or set()
         self.briefing_body = briefing_body
         self.cost_per_story = cost_per_story

@@ -358,6 +358,15 @@ async def test_a_call_that_hangs_fails_its_batch_and_the_run_goes_on(store: Stor
     results = {(r.model_key, r.subject_id): r for r in await store.compare_results(run_id)}
     assert all(results[(A.key, i)].ran and not results[(A.key, i)].ok for i in ids)
     assert all(results[(B.key, i)].ok for i in ids)
+    # The abandoned call may still be billed: recorded at its worst case, in the month's
+    # spend, the run's cost and the model's result cost.
+    worst = LLMJudge(FakeModelClient()).worst_case_cost(sample)
+    assert ("anthropic", "claude-haiku-5-5", "review", pytest.approx(worst)) in await spend_rows(
+        store
+    )
+    assert sum(results[(A.key, i)].cost_usd for i in ids) == pytest.approx(worst)
+    run = await store.compare_run(run_id)
+    assert run is not None and run.cost_usd == pytest.approx(worst + 0.001)
 
 
 async def test_a_run_over_the_time_limit_fails_and_finishes(store: Store) -> None:
@@ -375,6 +384,16 @@ async def test_a_run_over_the_time_limit_fails_and_finishes(store: Store) -> Non
     assert (run.status, run.error, run.finished_at) == ("failed", compare.TOO_LONG, NOW)
     assert "15 minutes" in compare.TOO_LONG
     assert b.calls == []
+    # The call in flight when the time ran out is recorded at its worst case.
+    sample = await compare.judge_sample(store, NOW, 3)
+    worst = LLMJudge(FakeModelClient()).worst_case_cost(sample)
+    assert await spend_rows(store) == [
+        ("anthropic", "claude-haiku-5-5", "review", pytest.approx(worst))
+    ]
+    assert run.cost_usd == pytest.approx(worst)
+    results = await store.compare_results(run_id)
+    assert {r.model_key for r in results} == {A.key}
+    assert sum(r.cost_usd for r in results) == pytest.approx(worst)
 
 
 async def test_an_unusable_model_fails_the_run_before_anything_is_sent(store: Store) -> None:
@@ -562,7 +581,9 @@ async def test_a_timed_out_calls_worst_case_is_held_against_the_cap(store: Store
     )
     assert status == "capped"
     assert len(a.calls) == 1 and b.calls == []
-    assert await spend_rows(store) == []
+    assert await spend_rows(store) == [
+        ("anthropic", "claude-haiku-5-5", "review", pytest.approx(worst))
+    ]
 
 
 def test_writer_summary_tallies_preferences() -> None:

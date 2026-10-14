@@ -6,15 +6,20 @@ import asyncio
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 import openai
 import pytest
 
+from ai_newsdesk.budget import Budget
+from ai_newsdesk.clock import FixedClock
 from ai_newsdesk.llm.base import ModelClient, StructuredResult
 from ai_newsdesk.llm.factory import UnusableModelError
 from ai_newsdesk.llm.prices import Price, PriceBook
 from ai_newsdesk.models import Purpose, Usage
+from ai_newsdesk.runtime_settings import RuntimeSettings
+from ai_newsdesk.store import Store
 from ai_newsdesk.web import model_test
 from ai_newsdesk.web.model_test import (
     TEST_MAX_TOKENS,
@@ -29,6 +34,7 @@ from tests.llm.test_validate import CATALOGUE, PRICING
 
 PRICES = PriceBook(PRICING, lambda: CATALOGUE)
 ALL_KEYS = {"anthropic", "openai", "openrouter"}
+NOW = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
 
 
 class FakeBudget:
@@ -180,7 +186,42 @@ async def test_a_test_that_never_answers_times_out(monkeypatch: pytest.MonkeyPat
     assert result.called and not result.ok
     assert result.message == model_test.timeout_message()  # built from the patched limit
     assert result.message == "The model didn't answer within 0.05 seconds."
-    assert len(slow.calls) == 1 and budget.recorded == []
+    assert len(slow.calls) == 1
+    # It may still be billed: recorded at the worst case used for the pre-check.
+    [usage] = budget.recorded
+    assert (usage.provider, usage.model, usage.purpose) == (
+        "openrouter",
+        "google/gemini-3.8-flash",
+        Purpose.REVIEW,
+    )
+    assert (usage.input_tokens, usage.output_tokens) == (0, 0)
+    assert usage.reported_cost_usd == pytest.approx(budget.asked[0])
+    assert result.cost_usd == pytest.approx(0.0012)  # what the budget charged
+
+
+async def test_a_timed_out_test_is_in_the_months_spend(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(model_test, "TEST_TIMEOUT_S", 0.05)
+    budget = Budget(
+        store, PRICING, FixedClock(NOW), RuntimeSettings(monthly_budget_usd=5.0), prices=PRICES
+    )
+    await budget.refresh()
+    slow = SlowClient([])
+    worst = slow.worst_case_usd(system=TEST_SYSTEM, user=TEST_USER, max_tokens=TEST_MAX_TOKENS)
+    result = await run_model_test(
+        "judge",
+        "openrouter",
+        "google/gemini-3.8-flash",
+        client_for=Clients(slow),
+        prices=PRICES,
+        catalogue=CATALOGUE,
+        keys=ALL_KEYS,
+        budget=budget,
+    )
+    assert result.cost_usd == pytest.approx(worst)
+    assert await store.month_spend(NOW, "Europe/London") == pytest.approx(worst)
+    assert budget.remaining_month() == pytest.approx(5.0 - worst)
 
 
 def test_the_test_timeout_is_30_seconds() -> None:

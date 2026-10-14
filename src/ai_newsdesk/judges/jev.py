@@ -158,6 +158,8 @@ def verdict_from_answers(item_id: int, answers: Mapping[str, Any]) -> Verdict:
 
 
 class JevJudge:
+    provider = "typesafe"
+
     def __init__(
         self,
         api_key: str,

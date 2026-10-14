@@ -3,7 +3,8 @@
 
 The call is refused before anything is sent when the choice fails validation, its key is
 missing or the month's budget cannot cover its worst case. A call that is made is recorded as
-spend like any other (purpose review: the spend table allows only the three job purposes).
+spend like any other (purpose review: the spend table allows only the three job purposes); one
+that times out may still be billed, so it is recorded at its worst case.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
+from ai_newsdesk.budget import abandoned_usage
 from ai_newsdesk.llm.base import ModelClient, StructuredResult, describe_error
 from ai_newsdesk.llm.catalogue import Catalogue
 from ai_newsdesk.llm.factory import UnusableModelError
@@ -119,8 +121,12 @@ async def run_model_test(
                         max_tokens=TEST_MAX_TOKENS,
                         purpose=Purpose.REVIEW,
                     )
-            except TimeoutError:  # no usage is known, so nothing is recorded
-                result, timed_out = StructuredResult(), True
+            except TimeoutError:  # no usage is known: it may be billed, so count the worst
+                usage = abandoned_usage(provider, model, Purpose.REVIEW, worst)
+                result, timed_out = StructuredResult(usage=usage), True
+            except asyncio.CancelledError:  # shutdown mid-call: the same rule, then stop
+                await budget.record(abandoned_usage(provider, model, Purpose.REVIEW, worst))
+                raise
             except Exception as exc:  # clients should not raise; never show the message
                 result = StructuredResult(error=describe_error(exc))
             latency_ms = round((time.perf_counter() - started) * 1000)

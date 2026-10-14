@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -19,7 +20,7 @@ from ai_newsdesk.consolidate import (
 )
 from ai_newsdesk.llm.anthropic_client import AnthropicClient
 from ai_newsdesk.llm.prices import PriceBook
-from ai_newsdesk.models import Category, ConsolidationStory, SourceKind, Trust, Verdict
+from ai_newsdesk.models import Category, ConsolidationStory, SourceKind, Trust, Usage, Verdict
 from ai_newsdesk.pipeline import COUNT_KEYS, run_once
 from ai_newsdesk.pricing import Pricing
 from ai_newsdesk.store.store import STORY_SOURCE_BONUS, Store
@@ -330,3 +331,29 @@ async def test_run_without_consolidator_or_with_one_story(store: Store) -> None:
 def test_module_exposes_the_limits() -> None:
     assert consolidate.CANDIDATE_LIMIT == 200
     assert consolidate.WINDOW_HOURS == 48
+
+
+class HangingConsolidator(ScriptedConsolidator):
+    def __init__(self) -> None:
+        super().__init__([], worst=0.003)
+        self.started = asyncio.Event()
+
+    async def find_groups(
+        self, stories: list[ConsolidationStory]
+    ) -> tuple[list[list[int]], list[Usage]]:
+        self.started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+async def test_a_call_cut_off_by_shutdown_is_recorded_at_its_worst_case(store: Store) -> None:
+    await three_duplicates(store)
+    consolidator = HangingConsolidator()
+    ctx = make_ctx(store, MutableClock(NOW), consolidator=consolidator)
+    task = asyncio.create_task(run_once(ctx, "test"))
+    await consolidator.started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    rows = await store._all("SELECT provider, model, purpose, cost_usd FROM spend")
+    assert [tuple(r) for r in rows] == [("anthropic", MODEL, "review", pytest.approx(0.003))]
