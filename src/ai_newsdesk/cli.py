@@ -6,6 +6,7 @@ import argparse
 import getpass
 import sys
 
+from ai_newsdesk import cli_db
 from ai_newsdesk.web.auth import hash_password
 
 MIN_PASSWORD_LENGTH = 12
@@ -52,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     hash_cmd.set_defaults(func=cmd_hash_password)
+    cli_db.register(sub)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

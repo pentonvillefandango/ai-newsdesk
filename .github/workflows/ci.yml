@@ -14,6 +14,8 @@ jobs:
           version: "0.12.23"
           enable-cache: true
       - run: uv sync --locked
+      - name: Syntax-check ops scripts
+        run: for f in ops/*.sh; do bash -n "$f" || exit 1; done
       - run: make test
         env:
           PYTHONFAULTHANDLER: "1"

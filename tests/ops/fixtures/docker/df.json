@@ -1,0 +1,4 @@
+{"Images":[],"Containers":[],"BuildCache":[],"Volumes":[
+{"Name":"ai-newsdesk_app-data","Size":"2.1MB","Links":"1"},
+{"Name":"ai-newsdesk-dev_app-data","Size":"1MB","Links":"0"},
+{"Name":"research-engine_app-data","Size":"9GB","Links":"1"}]}
