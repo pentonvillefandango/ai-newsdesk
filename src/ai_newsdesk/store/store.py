@@ -37,6 +37,7 @@ from ai_newsdesk.models import (
     StoryRef,
     StorySource,
     StoryText,
+    TokenTotals,
     Trust,
     UnscoredItem,
     Usage,
@@ -47,7 +48,19 @@ from ai_newsdesk.models import (
 )
 from ai_newsdesk.protocols import Clock
 from ai_newsdesk.store.db import apply_migrations, connect
-from ai_newsdesk.store.records import BriefingRecord, RunRecord, SourceStats
+from ai_newsdesk.store.records import (
+    LABELS,
+    BriefingRecord,
+    CompareItem,
+    CompareJob,
+    CompareModel,
+    CompareResult,
+    CompareRun,
+    CompareStatus,
+    Label,
+    RunRecord,
+    SourceStats,
+)
 
 log = logging.getLogger(__name__)
 
@@ -155,6 +168,19 @@ def _new_id(lastrowid: int | None) -> int:
 
 def _review_text(body_excerpt: str | None, snippet: str | None) -> str:
     return (body_excerpt or "").strip() or (snippet or "").strip() or NO_TEXT
+
+
+def _review_input(r: aiosqlite.Row) -> ReviewInput:
+    """What the judge reads for an item row; `story_candidates` is left for cluster.py."""
+    return ReviewInput(
+        item_id=r["id"],
+        source_name=r["source_name"],
+        source_kind=SourceKind(r["source_kind"]),
+        trust=Trust(r["trust"]),
+        title=r["title"],
+        author=r["author"],
+        text=_review_text(r["body_excerpt"], r["snippet"]),
+    )
 
 
 def _check_weight(weight: float) -> None:
@@ -592,18 +618,7 @@ class Store:
             " ORDER BY i.heuristic_score DESC, i.fetched_at ASC, i.id ASC LIMIT ?",
             (MAX_REVIEW_ATTEMPTS, cutoff, limit),
         )
-        return [
-            ReviewInput(
-                item_id=r["id"],
-                source_name=r["source_name"],
-                source_kind=SourceKind(r["source_kind"]),
-                trust=Trust(r["trust"]),
-                title=r["title"],
-                author=r["author"],
-                text=_review_text(r["body_excerpt"], r["snippet"]),
-            )
-            for r in rows
-        ]
+        return [_review_input(r) for r in rows]
 
     async def expire_old_queued(self, now: dt.datetime, hours: int = 48) -> int:
         cutoff = _ts(now - dt.timedelta(hours=hours))
@@ -810,27 +825,21 @@ class Store:
             " ORDER BY score DESC, id ASC LIMIT ?",
             (MAX_TEXT_ATTEMPTS, limit),
         )
-        result: list[WriteInput] = []
-        for story in stories:
-            items = await self._all(
-                "SELECT i.title, i.body_excerpt, i.snippet FROM items i"
-                " JOIN sources s ON s.id = i.source_id"
-                " WHERE i.story_id = ? AND s.kind != 'x_person'"
-                " ORDER BY COALESCE(i.signal, -1) DESC, i.id ASC LIMIT 2",
-                (story["id"],),
-            )
-            texts = [
-                f"{i['title']}\n\n{_review_text(i['body_excerpt'], i['snippet'])}" for i in items
-            ]
-            result.append(
-                WriteInput(
-                    story_id=story["id"],
-                    headline=story["headline"],
-                    texts=texts,
-                    include_why=include_why,
-                )
-            )
-        return result
+        return [await self._write_input(story, include_why) for story in stories]
+
+    async def _write_input(self, story: aiosqlite.Row, include_why: bool) -> WriteInput:
+        """What the writer reads for a story (id, headline): its best 1-2 item texts."""
+        items = await self._all(
+            "SELECT i.title, i.body_excerpt, i.snippet FROM items i"
+            " JOIN sources s ON s.id = i.source_id"
+            " WHERE i.story_id = ? AND s.kind != 'x_person'"
+            " ORDER BY COALESCE(i.signal, -1) DESC, i.id ASC LIMIT 2",
+            (story["id"],),
+        )
+        texts = [f"{i['title']}\n\n{_review_text(i['body_excerpt'], i['snippet'])}" for i in items]
+        return WriteInput(
+            story_id=story["id"], headline=story["headline"], texts=texts, include_why=include_why
+        )
 
     async def mark_text_failed(self, story_ids: list[int]) -> None:
         """Count a failed write; after MAX_TEXT_ATTEMPTS the story waits for a new lead."""
@@ -1057,21 +1066,41 @@ class Store:
             "SELECT COUNT(*) AS n FROM items WHERE status = 'reviewed' AND fetched_at >= ?",
             (since,),
         )
-        by_purpose = {
-            str(r["purpose"]): float(r["usd"])
-            for r in await self._all(
-                "SELECT purpose, COALESCE(SUM(cost_usd), 0) AS usd FROM spend"
-                " WHERE at >= ? GROUP BY purpose",
-                (since,),
+        rows = await self._all(
+            "SELECT purpose, COALESCE(SUM(cost_usd), 0) AS usd,"
+            " SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,"
+            " SUM(cache_read_tokens) AS cache_read_tokens,"
+            " SUM(cache_write_tokens) AS cache_write_tokens"
+            " FROM spend WHERE at >= ? GROUP BY purpose",
+            (since,),
+        )
+        by_purpose = {str(r["purpose"]): r for r in rows}
+
+        def usd(purpose: str) -> float:
+            row = by_purpose.get(purpose)
+            return float(row["usd"]) if row is not None else 0.0
+
+        def tokens(purpose: str) -> TokenTotals:
+            row = by_purpose.get(purpose)
+            if row is None:
+                return TokenTotals()
+            return TokenTotals(
+                input_tokens=int(row["input_tokens"] or 0),
+                output_tokens=int(row["output_tokens"] or 0),
+                cache_read_tokens=int(row["cache_read_tokens"] or 0),
+                cache_write_tokens=int(row["cache_write_tokens"] or 0),
             )
-        }
+
         return UsageStats(
             days=days,
             runs=int(runs["n"]) if runs is not None else 0,
             items_reviewed=int(reviewed["n"]) if reviewed is not None else 0,
-            review_usd=by_purpose.get("review", 0.0),
-            write_usd=by_purpose.get("write", 0.0),
-            briefing_usd=by_purpose.get("briefing", 0.0),
+            review_usd=usd("review"),
+            write_usd=usd("write"),
+            briefing_usd=usd("briefing"),
+            review_tokens=tokens("review"),
+            write_tokens=tokens("write"),
+            briefing_tokens=tokens("briefing"),
         )
 
     # ---- runs ------------------------------------------------------------------------
@@ -1342,3 +1371,220 @@ class Store:
                 (item_id,),
             )
             return cur.rowcount > 0
+
+    # ---- comparisons (multi-provider spec 4) ---------------------------------------------
+    # A comparison only ever writes these four tables: never items or stories.
+
+    async def compare_judge_inputs(
+        self, now: dt.datetime, limit: int, days: int = 7
+    ) -> list[ReviewInput]:
+        """A judge comparison's sample: the newest reviewed or queued news items (no X posts)
+        of the last `days`, with the text the production judge reads."""
+        rows = await self._all(
+            "SELECT i.id, i.title, i.author, i.body_excerpt, i.snippet,"
+            " s.name AS source_name, s.kind AS source_kind, s.trust AS trust"
+            " FROM items i JOIN sources s ON s.id = i.source_id"
+            " WHERE i.status IN ('reviewed', 'queued') AND s.kind != 'x_person'"
+            "   AND i.fetched_at >= ?"
+            " ORDER BY i.fetched_at DESC, i.id DESC LIMIT ?",
+            (_ts(now - dt.timedelta(days=days)), limit),
+        )
+        return [_review_input(r) for r in rows]
+
+    async def compare_writer_inputs(
+        self, now: dt.datetime, limit: int, include_why: bool, hours: int = 48
+    ) -> list[WriteInput]:
+        """A writer comparison's sample: the best-scored news stories updated in the last
+        `hours`, each with the texts the production writer reads."""
+        stories = await self._all(
+            "SELECT st.id, st.headline FROM stories st"
+            " WHERE st.last_updated_at >= ? AND st.lead_item_id IS NOT NULL"
+            " AND EXISTS (SELECT 1 FROM items i JOIN sources s ON s.id = i.source_id"
+            "      WHERE i.story_id = st.id AND s.kind != 'x_person')"
+            " ORDER BY st.score DESC, st.id ASC LIMIT ?",
+            (_ts(now - dt.timedelta(hours=hours)), limit),
+        )
+        return [await self._write_input(story, include_why) for story in stories]
+
+    async def compare_items(self, ids: list[int]) -> dict[int, CompareItem]:
+        """Items by id with their production verdict, story thumb, source weight and label."""
+        if not ids:
+            return {}
+        rows = await self._all(
+            "SELECT i.id, i.title, i.url, i.judge_json, s.name, s.weight,"
+            " COALESCE(st.feedback, 0) AS feedback, l.label"
+            " FROM items i JOIN sources s ON s.id = i.source_id"
+            " LEFT JOIN stories st ON st.id = i.story_id"
+            " LEFT JOIN labels l ON l.item_id = i.id"
+            " WHERE i.id IN (SELECT value FROM json_each(?))",
+            (json.dumps(ids),),
+        )
+        return {
+            int(r["id"]): CompareItem(
+                item_id=int(r["id"]),
+                title=r["title"],
+                url=r["url"],
+                source_name=r["name"],
+                weight=float(r["weight"]),
+                verdict=(
+                    Verdict.model_validate_json(r["judge_json"])
+                    if r["judge_json"] is not None
+                    else None
+                ),
+                feedback=int(r["feedback"]),
+                label=r["label"],
+            )
+            for r in rows
+        }
+
+    async def create_compare_run(
+        self,
+        job: CompareJob,
+        models: list[CompareModel],
+        sample_ids: list[int],
+        cap_usd: float,
+        at: dt.datetime,
+    ) -> int:
+        async with self._tx() as conn:
+            cur = await conn.execute(
+                "INSERT INTO compare_runs (job, models_json, sample_ids_json, cap_usd, status,"
+                " started_at) VALUES (?, ?, ?, ?, 'running', ?)",
+                (
+                    job,
+                    json.dumps([m.model_dump() for m in models]),
+                    json.dumps(sample_ids),
+                    cap_usd,
+                    _ts(at),
+                ),
+            )
+            return _new_id(cur.lastrowid)
+
+    async def finish_compare_run(
+        self,
+        run_id: int,
+        status: CompareStatus,
+        at: dt.datetime,
+        cost_usd: float,
+        error: str | None,
+    ) -> None:
+        """Finish a running comparison; one already finished is left as it is."""
+        async with self._tx() as conn:
+            await conn.execute(
+                "UPDATE compare_runs SET status = ?, finished_at = ?, cost_usd = ?, error = ?"
+                " WHERE id = ? AND status = 'running'",
+                (status, _ts(at), cost_usd, error, run_id),
+            )
+
+    async def fail_running_compare_runs(self, at: dt.datetime, error: str) -> int:
+        """At start-up: a comparison still `running` was cut off by a restart."""
+        async with self._tx() as conn:
+            cur = await conn.execute(
+                "UPDATE compare_runs SET status = 'failed', finished_at = ?, error = ?"
+                " WHERE status = 'running'",
+                (_ts(at), error),
+            )
+            return cur.rowcount
+
+    @staticmethod
+    def _compare_run(r: aiosqlite.Row) -> CompareRun:
+        return CompareRun(
+            id=int(r["id"]),
+            job=r["job"],
+            models=[CompareModel.model_validate(m) for m in json.loads(r["models_json"])],
+            sample_ids=json.loads(r["sample_ids_json"]),
+            cap_usd=float(r["cap_usd"]),
+            status=r["status"],
+            started_at=_req_dt(r["started_at"]),
+            finished_at=_dt(r["finished_at"]),
+            cost_usd=float(r["cost_usd"]),
+            error=r["error"],
+        )
+
+    async def compare_run(self, run_id: int) -> CompareRun | None:
+        row = await self._one("SELECT * FROM compare_runs WHERE id = ?", (run_id,))
+        return self._compare_run(row) if row is not None else None
+
+    async def compare_runs(self, limit: int = 20) -> list[CompareRun]:
+        """Past comparisons, newest first."""
+        rows = await self._all(
+            "SELECT * FROM compare_runs ORDER BY started_at DESC, id DESC LIMIT ?", (limit,)
+        )
+        return [self._compare_run(r) for r in rows]
+
+    async def add_compare_results(self, run_id: int, results: list[CompareResult]) -> None:
+        async with self._tx() as conn:
+            await conn.executemany(
+                "INSERT OR REPLACE INTO compare_results (run_id, model_key, subject_id,"
+                " output_json, ok, latency_ms, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        run_id,
+                        r.model_key,
+                        r.subject_id,
+                        json.dumps(r.output) if r.output is not None else None,
+                        int(r.ok),
+                        r.latency_ms,
+                        r.cost_usd,
+                    )
+                    for r in results
+                ],
+            )
+
+    async def compare_results(self, run_id: int) -> list[CompareResult]:
+        rows = await self._all(
+            "SELECT * FROM compare_results WHERE run_id = ? ORDER BY rowid", (run_id,)
+        )
+        return [
+            CompareResult(
+                model_key=r["model_key"],
+                subject_id=int(r["subject_id"]),
+                output=json.loads(r["output_json"]) if r["output_json"] is not None else None,
+                ok=bool(r["ok"]),
+                latency_ms=r["latency_ms"],
+                cost_usd=float(r["cost_usd"]),
+            )
+            for r in rows
+        ]
+
+    async def set_label(self, item_id: int, label: Label | None, at: dt.datetime) -> None:
+        """The owner's label for an item (one per item); None clears it."""
+        if label is not None and label not in LABELS:
+            raise ValueError(f"label must be one of {', '.join(LABELS)}")
+        async with self._tx() as conn:
+            if label is None:
+                await conn.execute("DELETE FROM labels WHERE item_id = ?", (item_id,))
+                return
+            async with conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)) as cur:
+                if await cur.fetchone() is None:
+                    raise KeyError(f"no item {item_id}")
+            await conn.execute(
+                "INSERT INTO labels (item_id, label, set_at) VALUES (?, ?, ?)"
+                " ON CONFLICT (item_id) DO UPDATE SET label = excluded.label,"
+                " set_at = excluded.set_at",
+                (item_id, label, _ts(at)),
+            )
+
+    async def labels(self, item_ids: list[int]) -> dict[int, Label]:
+        rows = await self._all(
+            "SELECT item_id, label FROM labels WHERE item_id IN (SELECT value FROM json_each(?))",
+            (json.dumps(item_ids),),
+        )
+        return {int(r["item_id"]): r["label"] for r in rows}
+
+    async def set_writer_pref(
+        self, run_id: int, story_id: int, model_key: str, at: dt.datetime
+    ) -> None:
+        """The owner's preferred summary for a story in a writer comparison (one per story)."""
+        async with self._tx() as conn:
+            await conn.execute(
+                "INSERT INTO writer_prefs (run_id, story_id, model_key, set_at) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT (run_id, story_id) DO UPDATE SET model_key = excluded.model_key,"
+                " set_at = excluded.set_at",
+                (run_id, story_id, model_key, _ts(at)),
+            )
+
+    async def writer_prefs(self, run_id: int) -> dict[int, str]:
+        rows = await self._all(
+            "SELECT story_id, model_key FROM writer_prefs WHERE run_id = ?", (run_id,)
+        )
+        return {int(r["story_id"]): r["model_key"] for r in rows}

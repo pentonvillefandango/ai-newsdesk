@@ -235,7 +235,8 @@ def test_env_example_holds_placeholders_only() -> None:
     for key in SECRETS:
         assert env[key] == "change-me", key
     empty = ("OWNER_PASSWORD_HASH", "ANTHROPIC_API_KEY", "RESEARCH_ENGINE_API_KEY")
-    for key in (*empty, "TYPESAFE_API_KEY", "APP_PORT"):
+    optional = ("TYPESAFE_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY")
+    for key in (*empty, *optional, "APP_PORT"):
         assert env[key] == "", key
     assert env["SITE_HOST"].endswith(".localhost")
 

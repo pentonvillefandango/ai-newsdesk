@@ -1,0 +1,94 @@
+{% from "macros/compare.html" import pct, latency, model_name, use_button %}
+<section class="compare-results" id="judge-results" aria-labelledby="summary-title">
+  <h2 id="summary-title">By model</h2>
+  <p class="field__hint">Shown and hidden use your current show threshold ({{ threshold }}) and source weights, the same rule as Today. Label items below to measure accuracy; important items count double.</p>
+  <p class="scroll-hint" aria-hidden="true">Swipe the table sideways to see every column.</p>
+  <div class="table-scroll">
+    <table class="table compare-table" id="compare-summary">
+      <thead>
+        <tr>
+          <th scope="col">Model</th>
+          <th scope="col">Shown</th>
+          <th scope="col">Hidden</th>
+          <th scope="col">Junk</th>
+          <th scope="col">Avg signal</th>
+          <th scope="col">Agreement with production</th>
+          <th scope="col">Agreement with your thumbs</th>
+          <th scope="col">Accuracy against your labels</th>
+          <th scope="col">Failures</th>
+          <th scope="col">Cost</th>
+          <th scope="col">Avg latency</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in summary %}
+        <tr{% if s.key == best %} class="is-best"{% endif %}>
+          <th scope="row">{{ model_name(s, provider_names) }}{% if s.key == best %} <span class="chip-tag">Best</span>{% endif %}<div class="compare-use">{{ use_button(run, s, in_use, csrf_token) }}</div></th>
+          <td>{{ s.shown }}</td>
+          <td>{{ s.hidden }}</td>
+          <td>{{ s.junk }}</td>
+          <td>{% if s.avg_signal is none %}<span class="muted">—</span>{% else %}{{ "%.1f"|format(s.avg_signal) }}{% endif %}</td>
+          <td>{{ pct(s.agree_production, s.production_n) }}</td>
+          <td>{{ pct(s.agree_thumbs, s.thumbs_n) }}</td>
+          <td>{{ pct(s.accuracy, s.labels_n) }}</td>
+          <td>{{ s.failures }}{% if s.not_run %}<span class="muted">, {{ s.not_run }} not run</span>{% endif %}</td>
+          <td>{{ usd(s.cost_usd) }}</td>
+          <td>{{ latency(s.avg_latency_ms) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="items-title">By item</h2>
+  <p class="field__hint">Each cell is the model's signal, then shown or hidden. Rows where the models disagree are marked.</p>
+  <p class="scroll-hint" aria-hidden="true">Swipe the table sideways to see every column.</p>
+  <div class="table-scroll">
+    <table class="table compare-table compare-items" aria-labelledby="items-title">
+      <thead>
+        <tr>
+          <th scope="col">Item</th>
+          <th scope="col">Production</th>
+          {% for m in run.models %}
+          <th scope="col">{{ model_name(m, provider_names) }}</th>
+          {% endfor %}
+          <th scope="col">Your label</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in item_rows %}
+        {% set item = row.item %}
+        <tr class="compare-item{% if row.disagree %} disagree{% endif %}" id="item-{{ item.item_id }}">
+          <th scope="row" class="compare-item__title">
+            <a href="{{ item.url|safe_url }}" rel="noopener noreferrer" target="_blank">{{ item.title }}</a>
+            <span class="compare-item__source">{{ item.source_name }}{% if row.disagree %} · <strong class="disagree__tag">Models disagree</strong>{% endif %}</span>
+          </th>
+          <td>{% if item.verdict %}<span class="verdict verdict--{{ 'shown' if row.production_shown else 'hidden' }}">{{ item.verdict.signal }} · {{ "Shown" if row.production_shown else "Hidden" }}</span>{% else %}<span class="muted">Not judged</span>{% endif %}</td>
+          {% for cell in row.cells %}
+          <td>
+            {% if cell.state == "ok" %}
+            <span class="verdict verdict--{{ 'shown' if cell.shown else 'hidden' }}">{{ cell.verdict.signal }} · {{ "Shown" if cell.shown else "Hidden" }}</span>
+            <span class="verdict__meta">{% if cell.verdict.junk %}Junk · {% endif %}{{ category_label(cell.verdict.category) }}</span>
+            {% elif cell.state == "failed" %}
+            <span class="verdict verdict--failed">Failed</span>
+            {% else %}
+            <span class="muted">Not run</span>
+            {% endif %}
+          </td>
+          {% endfor %}
+          <td>
+            <form class="labels" method="post" action="/compare/runs/{{ run.id }}/label" hx-post="/compare/runs/{{ run.id }}/label" hx-target="#judge-results" hx-swap="outerHTML">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="item_id" value="{{ item.item_id }}">
+              {% for value, text in labels.items() %}
+              {% set on = item.label == value %}
+              <button class="label-button label-button--{{ value }}" type="submit" name="label" value="{{ 'clear' if on else value }}" aria-pressed="{{ 'true' if on else 'false' }}">{{ text }}</button>
+              {% endfor %}
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>

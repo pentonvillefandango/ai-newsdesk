@@ -18,7 +18,10 @@ log = logging.getLogger(__name__)
 
 RUNS_PER_DAY_CHOICES = (1, 2, 4, 6, 12, 24)
 DEFAULT_MODEL = "claude-haiku-5-5"
-ApiKeyName = Literal["anthropic", "research_engine", "typesafe"]
+ApiKeyName = Literal["anthropic", "research_engine", "typesafe", "openai", "openrouter"]
+# Who can do each AI job: the judge alone may also be Jev (TypeSafe).
+ModelProvider = Literal["anthropic", "openai", "openrouter"]
+JudgeProvider = Literal["anthropic", "typesafe", "openai", "openrouter"]
 API_KEY_NAMES: tuple[ApiKeyName, ...] = get_args(ApiKeyName)
 SECRET_PREFIX = "secret."  # noqa: S105  # a settings-key prefix, not a secret
 
@@ -30,13 +33,36 @@ class RuntimeSettings(BaseModel):
     briefing_time: str = Field(default="07:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     daily_review_cap: int = Field(default=500, ge=0)
     monthly_budget_usd: float = Field(default=5.0, ge=0, le=1000, allow_inf_nan=False)
-    judge_provider: Literal["anthropic", "typesafe"] = "anthropic"
+    judge_provider: JudgeProvider = "anthropic"
     judge_model: str = Field(default=DEFAULT_MODEL, min_length=1)
     writer_model: str = Field(default=DEFAULT_MODEL, min_length=1)
     briefing_model: str = Field(default=DEFAULT_MODEL, min_length=1)
+    # Multi-provider: each job picks its provider. Missing keys in an older database take these
+    # defaults, which match the single-provider behaviour.
+    writer_provider: ModelProvider = "anthropic"
+    briefing_provider: ModelProvider = "anthropic"
+    consolidator_provider: ModelProvider = "anthropic"
+    consolidator_model: str = Field(default=DEFAULT_MODEL, min_length=1)
     show_threshold: int = Field(default=4, ge=0, le=10)
     why_it_matters: bool = True
     hn_min_points: int = Field(default=100, ge=0)
+
+    def _jobs(self) -> list[tuple[str, str]]:
+        """(provider, model) per AI job, writer first."""
+        return [
+            (self.writer_provider, self.writer_model),
+            (self.judge_provider, self.judge_model),
+            (self.briefing_provider, self.briefing_model),
+            (self.consolidator_provider, self.consolidator_model),
+        ]
+
+    def anthropic_model(self) -> str:
+        """A Claude model a job uses (the writer's when it is on Anthropic), else the default."""
+        return next((m for p, m in self._jobs() if p == "anthropic"), DEFAULT_MODEL)
+
+    def uses_model_list(self) -> bool:
+        """True when a job is on OpenAI or OpenRouter, whose prices come from the model list."""
+        return any(p in ("openai", "openrouter") for p, _ in self._jobs())
 
     @field_validator("runs_per_day")
     @classmethod
@@ -134,6 +160,10 @@ class ApiKeys:
             set_in_env=bool(self._env_value(name)),
             updated_at=datetime.fromisoformat(record["updated_at"]) if record else None,
         )
+
+    async def available(self) -> set[ApiKeyName]:
+        """The names whose key resolves (UI or `.env`); never the values."""
+        return {name for name in API_KEY_NAMES if await self.resolve_api_key(name)}
 
     async def resolve_api_key(self, name: ApiKeyName) -> str:
         """The UI value, else the `.env` value, else "". An undecryptable UI value is skipped."""

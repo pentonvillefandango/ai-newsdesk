@@ -1,0 +1,6 @@
+{# One Test result. Every value is ours or scrubbed, and autoescaped like everything else. #}
+<p class="model-test model-test--{{ 'ok' if t.ok else ('fail' if t.called else 'refused') }}" role="status">
+  <strong>{% if t.ok %}{{ t.message }}{% elif t.called %}Failed.{% else %}Not tested.{% endif %}</strong>
+  {% if not t.ok %}<span>{{ t.message }}</span>{% endif %}
+  <span class="model-test__meta">{{ provider_names.get(t.provider, t.provider) }} · {{ t.model }}{% if t.latency_ms is not none %} · {{ t.latency_ms }} ms{% endif %}{% if t.price %} · {{ price_text(t.price) }}{% endif %}{% if t.cost_usd is not none %} · cost {{ usd(t.cost_usd) }}{% endif %}</span>
+</p>

@@ -1,0 +1,51 @@
+{# The model controls shared by Settings (one row per job) and Compare (one row per model):
+   a Provider select, a Model select with one optgroup per provider, and an "Other model" box
+   whose datalist follows the provider (static/settings.js). `row` is a model_choices.ModelRow. #}
+{% macro _aria(name, errors) %}{% if errors.get(name) %} aria-describedby="{{ name }}-error" aria-invalid="true"{% endif %}{% endmacro %}
+{% macro _error(name, errors) %}{% if errors.get(name) %}<p class="field__error" id="{{ name }}-error">{{ errors[name] }}</p>{% endif %}{% endmacro %}
+
+{% macro model_fields(row, errors) %}
+{% set p = row.job ~ "_provider" %}
+{% set m = row.job ~ "_model" %}
+{% set o = row.job ~ "_model_other" %}
+          <div class="model-row__fields">
+            <div class="field">
+              <label for="{{ p }}">Provider</label>
+              <select id="{{ p }}" name="{{ p }}" data-provider-for="{{ row.job }}"{{ _aria(p, errors) }}>
+                {% for value, label in row.providers %}
+                <option value="{{ value }}"{% if row.provider == value %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+              {{ _error(p, errors) }}
+            </div>
+            <div class="field">
+              <label for="{{ m }}">Model</label>
+              <select id="{{ m }}" name="{{ m }}" data-models-for="{{ row.job }}"{{ _aria(m, errors) }}>
+                <option value=""{% if not row.selected %} selected{% endif %}>Other model (type it in the next box)</option>
+                {% for g in row.groups %}
+                <optgroup label="{{ g.label }}" data-provider="{{ g.provider }}">
+                  {% for opt in g.options %}
+                  <option value="{{ opt.id }}"{% if not opt.usable %} disabled{% elif opt.id == row.selected %} selected{% endif %}>{{ opt.label }}</option>
+                  {% endfor %}
+                </optgroup>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="field">
+              <label for="{{ o }}">Other model</label>
+              <input id="{{ o }}" name="{{ o }}" type="text" list="models-{{ row.provider }}" value="{{ row.other }}" autocomplete="off" spellcheck="false" placeholder="Model id, e.g. vendor/model" data-other-for="{{ row.job }}" aria-describedby="{{ o }}-hint{% if errors.get(m) %} {{ m }}-error{% endif %}"{% if errors.get(m) %} aria-invalid="true"{% endif %}>
+              <p class="field__hint" id="{{ o }}-hint">Used instead of the list when filled in.</p>
+            </div>
+          </div>
+          {{ _error(m, errors) }}
+{% endmacro %}
+
+{% macro model_datalists(datalists) %}
+        {% for d in datalists %}
+        <datalist id="models-{{ d.provider }}">
+          {% for opt in d.options %}
+          <option value="{{ opt.id }}">{{ opt.label }}</option>
+          {% endfor %}
+        </datalist>
+        {% endfor %}
+{% endmacro %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}{{ job_labels[run.job] }} comparison on Newsdesk{% endblock %}
+{% block content %}
+{% set started = run.started_at.astimezone(zone) %}
+<header class="page-head">
+  <h1>{{ job_labels[run.job] }} comparison</h1>
+  <p class="lede">{{ run.models|length }} models over {{ run.sample_ids|length }} {{ ("item" if run.sample_ids|length == 1 else "items") if run.job == "judge" else ("story" if run.sample_ids|length == 1 else "stories") }}, started {{ short_date(started.date()) }} at {{ "%02d:%02d"|format(started.hour, started.minute) }}. Cap ${{ "%.2f"|format(run.cap_usd) }}, spent {{ usd(run.cost_usd) }}.</p>
+  <p class="page-head__back"><a href="/compare">All comparisons</a></p>
+</header>
+{% if used %}
+<div class="notice notice--ok" role="status"><p>{{ used_model }} is now the {{ "judge" if run.job == "judge" else "summary writer" }}. It applies from the next run.</p></div>
+{% if used_warning %}
+<div class="notice notice--warn" role="note"><p>{{ used_warning }}</p></div>
+{% endif %}
+{% endif %}
+{% if use_error %}
+<div class="notice notice--error" role="alert"><p>Nothing was changed. {{ use_error }}</p></div>
+{% endif %}
+{% if run.status == "running" %}
+{% include "partials/compare_status.html" %}
+{% else %}
+<div class="compare-outcome compare-outcome--{{ run.status }}">
+  <p><span class="status status--{{ run.status }}">{{ status_labels[run.status] }}</span>{% if run.status == "capped" %} A model's next call would have passed a cap, so it stopped there; the rest are marked "Not run".{% endif %}{% if run.error %} {{ run.error }}{% endif %}</p>
+</div>
+{% endif %}
+{% if run.job == "judge" %}
+{% if judge_warning %}
+<div class="notice notice--warn" role="note"><p>{{ judge_warning }}</p></div>
+{% endif %}
+{% include "partials/compare_judge.html" %}
+{% else %}
+{% include "partials/compare_writer.html" %}
+{% endif %}
+{% endblock %}

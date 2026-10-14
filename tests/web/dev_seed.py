@@ -19,11 +19,13 @@ from ai_newsdesk.models import (
     ItemStatus,
     Purpose,
     SourceKind,
+    StoryText,
     Trust,
     Usage,
     Verdict,
 )
 from ai_newsdesk.store import Store
+from ai_newsdesk.store.records import CompareModel, CompareResult
 from tests.web import seed
 
 # (handle, hours since published or None, signal or None, post text). Fictional accounts only.
@@ -111,6 +113,110 @@ STORIES = [
         None,
     ),
 ]
+
+
+HAIKU = CompareModel(provider="anthropic", model="claude-haiku-5-5")
+GEMINI = CompareModel(provider="openrouter", model="google/gemini-3.8-flash")
+NANO = CompareModel(provider="openai", model="gpt-5.4-nano")
+# Per judged item: (Haiku, Gemini, nano) signals; None = that model failed the item.
+JUDGE_SIGNALS = [
+    (9, 8, 9),
+    (8, 7, 5),
+    (6, 3, 7),
+    (7, 7, 6),
+    (5, 2, 6),
+    (6, 6, None),
+    (3, 5, 2),
+    (8, 8, 8),
+    (2, 1, 4),
+]
+WRITER_TEXTS = {
+    GEMINI.key: [
+        "Northwind AI released a small model that scores within two points of last year's flagship on reasoning tests. It runs on one consumer GPU, and the weights are under a research licence.",
+        "Halcyon Research hid facts at many depths in long documents and found every tested model lost accuracy well before its advertised context limit, often past 200k tokens.",
+        "Pinecrest Labs' coding assistant can now index a repository and answer questions about it offline, using a bundled small model.",
+    ],
+}
+
+
+async def seed_comparisons(store: Store, now: datetime) -> None:
+    """One finished judge comparison (with labels) and one writer comparison (with a
+    preference), plus a capped one, so the Compare page has content."""
+    sample = await store.compare_judge_inputs(now, 30)
+    ids = [s.item_id for s in sample][: len(JUDGE_SIGNALS)]
+    models = [HAIKU, GEMINI, NANO]
+    run_id = await store.create_compare_run("judge", models, ids, 0.25, now - timedelta(hours=3))
+    rows: list[CompareResult] = []
+    for item_id, signals in zip(ids, JUDGE_SIGNALS, strict=True):
+        for m, signal, latency, cost in zip(
+            models, signals, (1400, 2100, 900), (0.0011, 0.0016, 0.0004), strict=True
+        ):
+            output = (
+                Verdict(
+                    item_id=item_id, signal=signal, junk=signal < 3, category=Category.RESEARCH
+                ).model_dump(mode="json")
+                if signal is not None
+                else None
+            )
+            rows.append(
+                CompareResult(
+                    model_key=m.key,
+                    subject_id=item_id,
+                    output=output,
+                    ok=output is not None,
+                    latency_ms=latency,
+                    cost_usd=cost,
+                )
+            )
+    await store.add_compare_results(run_id, rows)
+    await store.finish_compare_run(
+        run_id, "done", now - timedelta(hours=3) + timedelta(minutes=1), 0.0279, None
+    )
+    for item_id, label in zip(ids, ("important", "show", "junk", "show"), strict=False):
+        await store.set_label(item_id, label, now)  # type: ignore[arg-type]
+
+    stories = await store.compare_writer_inputs(now, 3, True)
+    story_ids = [w.story_id for w in stories]
+    run_id = await store.create_compare_run(
+        "writer", [HAIKU, GEMINI], story_ids, 0.25, now - timedelta(hours=2)
+    )
+    rows = []
+    for n, story_id in enumerate(story_ids):
+        texts = {
+            HAIKU.key: f"Haiku's take on story {n + 1}: what happened, who did it and the key numbers, in two plain sentences.",
+            GEMINI.key: WRITER_TEXTS[GEMINI.key][n % 3],
+        }
+        for m, latency in ((HAIKU, 1900), (GEMINI, 2600)):
+            text = StoryText(story_id=story_id, summary=texts[m.key])
+            rows.append(
+                CompareResult(
+                    model_key=m.key,
+                    subject_id=story_id,
+                    output=text.model_dump(mode="json"),
+                    ok=True,
+                    latency_ms=latency,
+                    cost_usd=0.0009,
+                )
+            )
+    await store.add_compare_results(run_id, rows)
+    await store.finish_compare_run(
+        run_id, "done", now - timedelta(hours=2) + timedelta(minutes=1), 0.0054, None
+    )
+    if story_ids:
+        await store.set_writer_pref(run_id, story_ids[0], GEMINI.key, now)
+
+    capped = await store.create_compare_run(
+        "judge", [GEMINI, NANO], ids[:2], 0.01, now - timedelta(days=1)
+    )
+    await store.add_compare_results(
+        capped,
+        [
+            CompareResult(model_key=m.key, subject_id=i, ok=False)
+            for m in (GEMINI, NANO)
+            for i in ids[:2]
+        ],
+    )
+    await store.finish_compare_run(capped, "capped", now - timedelta(days=1), 0.0, None)
 
 
 async def main(db_path: str) -> None:
@@ -221,6 +327,7 @@ async def main(db_path: str) -> None:
             await store.finish_run(
                 run_id, now - timedelta(hours=hours_ago) + timedelta(minutes=3), {}, 0.05, error
             )
+        await seed_comparisons(store, now)
     finally:
         await store.close()
 

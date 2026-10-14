@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Compare on Newsdesk{% endblock %}
+{% block scripts %}<script src="/static/settings.js" defer></script>{% endblock %}
+{% block content %}
+{% from "macros/models.html" import model_fields, model_datalists %}
+{% macro aria(name, hint=false) %}{% if hint or errors.get(name) %} aria-describedby="{% if hint %}{{ name }}-hint{% endif %}{% if hint and errors.get(name) %} {% endif %}{% if errors.get(name) %}{{ name }}-error{% endif %}"{% endif %}{% if errors.get(name) %} aria-invalid="true"{% endif %}{% endmacro %}
+{% macro error(name) %}{% if errors.get(name) %}<p class="field__error" id="{{ name }}-error">{{ errors[name] }}</p>{% endif %}{% endmacro %}
+<header class="page-head">
+  <h1>Compare</h1>
+  <p class="lede">Run two to four models over the same recent news and see how they differ before you switch.</p>
+</header>
+{% if notice %}
+<div class="notice notice--error" role="alert"><p>{{ notice }}</p></div>
+{% endif %}
+{% if errors %}
+<div class="notice notice--error" role="alert"><p>Nothing was checked. Fix the {{ "field" if errors|length == 1 else errors|length ~ " fields" }} marked below.</p></div>
+{% endif %}
+
+<section class="compare-setup" id="setup" aria-labelledby="setup-title">
+  <h2 id="setup-title" class="visually-hidden">New comparison</h2>
+  <form class="compare-form" method="post" action="/compare/check#cost">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <fieldset class="compare-form__group">
+      <legend>Job</legend>
+      <div class="choice-row">
+        {% for value, label in job_labels.items() %}
+        <label class="choice"><input type="radio" name="job" value="{{ value }}"{% if values.job == value %} checked{% endif %}{{ aria("job") }}> {{ label }}</label>
+        {% endfor %}
+      </div>
+      <p class="field__hint">The judge is compared on the last reviewed or queued news items of 7 days, the summary writer on the top stories of 48 hours. Each model gets exactly the prompts and batches the real job uses.</p>
+      {{ error("job") }}
+    </fieldset>
+
+    <fieldset class="compare-form__group" aria-describedby="models-hint{% if errors.get('models') %} models-error{% endif %}">
+      <legend>Models</legend>
+      <p class="field__hint" id="models-hint">Choose two to four. Rows set to "Not used" are skipped.</p>
+      {{ error("models") }}
+      <div class="compare-models">
+        {% for row in rows %}
+        <fieldset class="model-row" id="model-{{ row.job }}">
+          <legend>{{ row.label }}</legend>
+          {{ model_fields(row, errors) }}
+        </fieldset>
+        {% endfor %}
+      </div>
+      {{ model_datalists(datalists) }}
+    </fieldset>
+
+    <fieldset class="compare-form__group">
+      <legend>Sample and spend</legend>
+      <div class="compare-form__pair">
+        <div class="field">
+          <label for="sample_size">Sample size</label>
+          <input id="sample_size" name="sample_size" type="number" min="1" max="{{ sample_max.judge }}" step="1" inputmode="numeric" value="{{ values.sample_size }}" placeholder="Default"{{ aria("sample_size", true) }}>
+          <p class="field__hint" id="sample_size-hint">Empty for the default: {{ sample_default.judge }} items for the judge (up to {{ sample_max.judge }}), {{ sample_default.writer }} stories for the writer (up to {{ sample_max.writer }}).</p>
+          {{ error("sample_size") }}
+        </div>
+        <div class="field">
+          <label for="cap_usd">Spend cap for this comparison ($)</label>
+          <input id="cap_usd" name="cap_usd" type="number" min="{{ cap_min }}" max="{{ cap_max }}" step="0.01" inputmode="decimal" value="{{ values.cap_usd }}"{{ aria("cap_usd", true) }}>
+          <p class="field__hint" id="cap_usd-hint">${{ "%.2f"|format(cap_min) }} to ${{ "%.2f"|format(cap_max) }}, and never more than the {{ usd(money_left) }} left this month. Every call is checked against both.</p>
+          {{ error("cap_usd") }}
+        </div>
+      </div>
+    </fieldset>
+
+    <div class="compare-check" id="cost" aria-live="polite">
+      {% if check %}
+      {% if check.subjects == 0 %}
+      <div class="notice notice--warn" role="status"><p>No {{ check.noun }} to compare yet. Run the desk first, or try the other job.</p></div>
+      {% elif check.fits %}
+      <div class="notice notice--ok" role="status"><p><strong>Maximum cost ${{ "%.4f"|format(check.max_usd) }}</strong> for {{ check.subjects }} {{ check.noun }} and {{ check.calls }} {{ "call" if check.calls == 1 else "calls" }}, within the ${{ "%.2f"|format(check.cap_usd) }} cap. The real cost is usually far lower.</p></div>
+      {% else %}
+      <div class="notice notice--error" role="status"><p><strong>Maximum cost ${{ "%.4f"|format(check.max_usd) }}</strong> for {{ check.subjects }} {{ check.noun }} and {{ check.calls }} calls is over the cap of ${{ "%.2f"|format(check.cap_usd) }}. Raise the cap, or use fewer {{ check.noun }} or models.</p></div>
+      {% endif %}
+      {% endif %}
+      <div class="form__actions">
+        <button class="button button--quiet" type="submit">Check cost</button>
+        <button class="button" type="submit" formaction="/compare/run"{% if not (check and check.fits) %} disabled{% endif %}>Run comparison</button>
+      </div>
+      <p class="field__hint">Run unlocks once the maximum cost fits the cap. A comparison never waits: if a collection run is going, try again when it finishes.</p>
+    </div>
+  </form>
+</section>
+
+<section class="compare-history" id="history" aria-labelledby="history-title">
+  <h2 id="history-title">Past comparisons</h2>
+  {% if history %}
+  <p class="scroll-hint" aria-hidden="true">Swipe the table sideways to see every column.</p>
+  <div class="table-scroll">
+    <table class="table compare-table">
+      <thead>
+        <tr><th scope="col">Started</th><th scope="col">Job</th><th scope="col">Models</th><th scope="col">Status</th><th scope="col">Cost</th><th scope="col">Best</th></tr>
+      </thead>
+      <tbody>
+        {% for h in history %}
+        {% set started = h.run.started_at.astimezone(zone) %}
+        <tr>
+          <td><a href="/compare/runs/{{ h.run.id }}">{{ short_date(started.date()) }}, {{ "%02d:%02d"|format(started.hour, started.minute) }}</a></td>
+          <td>{{ job_labels[h.run.job] }}</td>
+          <td>{{ h.run.models|length }}</td>
+          <td><span class="status status--{{ h.run.status }}">{{ status_labels[h.run.status] }}</span></td>
+          <td>{{ usd(h.run.cost_usd) }}</td>
+          <td>{% if h.best %}{{ h.best.model }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="field__hint">None yet. Your first comparison will be listed here.</p>
+  {% endif %}
+</section>
+{% endblock %}

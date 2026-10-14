@@ -13,7 +13,7 @@ from ai_newsdesk.config import Settings
 from ai_newsdesk.runtime_settings import API_KEY_NAMES, RuntimeSettings
 from ai_newsdesk.web.keys import KeyTester
 from tests.web.fakes import fake_ctx_factory
-from tests.web.support import BASE_URL, CONFIG_DIR, NOW, login, make_settings
+from tests.web.support import BASE_URL, CONFIG_DIR, NOW, fixture_catalogue, login, make_settings
 
 
 @pytest.fixture
@@ -43,6 +43,7 @@ def app(settings: Settings, key_results: dict[str, str | None]) -> FastAPI:
         key_testers={name: _tester(key_results, name) for name in API_KEY_NAMES},
         config_dir=CONFIG_DIR,
         clock=FixedClock(NOW),
+        catalogue_fetch=fixture_catalogue,
     )
 
 

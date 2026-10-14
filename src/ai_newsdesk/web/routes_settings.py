@@ -1,4 +1,5 @@
-"""Settings: runtime settings, write-only API keys, Refresh now, spend meter and chart."""
+"""Settings: runtime settings, models per job (with Test and the model-list refresh),
+write-only API keys, Refresh now, spend meter and chart."""
 
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import ValidationError
 
-from ai_newsdesk.pricing import Pricing
+from ai_newsdesk.budget import Budget
 from ai_newsdesk.runtime_settings import (
     API_KEY_NAMES,
     ApiKeyName,
@@ -22,10 +23,29 @@ from ai_newsdesk.runtime_settings import (
 from ai_newsdesk.scheduler import Scheduler
 from ai_newsdesk.web.chart import spend_chart
 from ai_newsdesk.web.csrf import csrf_protect
-from ai_newsdesk.web.deps import api_keys_of, now_of, page, store_of, zone_of
-from ai_newsdesk.web.estimate import frequency_options, rates_from
+from ai_newsdesk.web.deps import (
+    api_keys_of,
+    is_htmx,
+    now_of,
+    page,
+    partial,
+    store_of,
+    zone_of,
+)
+from ai_newsdesk.web.estimate import choices_of, frequency_options, profile_from, rates_for
 from ai_newsdesk.web.forms import parse_settings_form
 from ai_newsdesk.web.keys import KEY_LABELS, MAX_KEY_CHARS, scrub
+from ai_newsdesk.web.model_choices import (
+    JOB_NAMES,
+    JUDGE_WARNING,
+    PROVIDER_NAMES,
+    datalists,
+    effective_model,
+    judge_warning,
+    model_rows,
+    price_text,
+)
+from ai_newsdesk.web.model_test import ModelTestResult, run_model_test
 from ai_newsdesk.web.runs import run_dict
 
 router = APIRouter(include_in_schema=False, dependencies=[Depends(csrf_protect)])
@@ -36,6 +56,15 @@ SAVED = {
     "key": "Key tested and saved.",
     "cleared": "Key cleared. The .env value applies now, if there is one.",
 }
+MODEL_LIST = {
+    "refreshed": "Model list refreshed.",
+    "kept": "The model list couldn't be refreshed, so we kept the previous list.",
+    "failed": (
+        "The model list couldn't be loaded. Until it loads, only the models priced in"
+        " config/pricing.yaml can be used."
+    ),
+}
+RUN_BUSY = "A run is in progress; try again when it finishes."
 RUN = {
     "started": "Run started. New stories appear on Today when it finishes.",
     "busy": "A run is already going. Try again when it has finished.",
@@ -49,30 +78,13 @@ FIELDS = (
     "judge_model",
     "writer_model",
     "briefing_model",
+    "writer_provider",
+    "briefing_provider",
+    "consolidator_provider",
+    "consolidator_model",
     "show_threshold",
     "hn_min_points",
 )
-
-
-def _models_by_provider(pricing: Pricing) -> dict[str, set[str]]:
-    return {provider: set(pricing.models(provider)) for provider in ("anthropic", "typesafe")}
-
-
-def _model_options(pricing: Pricing) -> list[dict[str, str]]:
-    options: list[dict[str, str]] = []
-    for model_id in pricing.models():
-        price = pricing.price(model_id)
-        options.append(
-            {
-                "id": model_id,
-                "provider": price.provider,
-                "label": (
-                    f"{model_id} (${price.input_per_mtok:g} in,"
-                    f" ${price.output_per_mtok:g} out per million tokens)"
-                ),
-            }
-        )
-    return options
 
 
 def _values_from(runtime: RuntimeSettings) -> dict[str, str]:
@@ -84,6 +96,8 @@ def _values_from(runtime: RuntimeSettings) -> dict[str, str]:
 
 def _values_echo(form: dict[str, str]) -> dict[str, str]:
     values = {key: form.get(key, "") for key in FIELDS}
+    for job in JOB_NAMES:
+        values[f"{job}_model_other"] = form.get(f"{job}_model_other", "")
     values["why_it_matters"] = "on" if form.get("why_it_matters") == "on" else ""
     return values
 
@@ -107,13 +121,17 @@ async def _render(
     status_code: int = 200,
 ) -> HTMLResponse:
     store = store_of(request)
-    settings = request.app.state.settings
-    pricing: Pricing = request.app.state.pricing
+    app = request.app
+    settings = app.state.settings
     now = now_of(request)
     today = now.astimezone(zone_of(request)).date()
     runtime = await load_runtime_settings(store)
     form = values if values is not None else _values_from(runtime)
-    rates = rates_from(await store.usage_last_days(now))
+    profile = profile_from(await store.usage_last_days(now))
+    rates = rates_for(profile, app.state.prices, choices_of(runtime))
+    catalogue = app.state.catalogue.current
+    tested = request.query_params.get("tested", "")
+    model_tests: dict[str, ModelTestResult] = app.state.model_tests
     spent = await store.month_spend(now, settings.tz)
     budget = runtime.monthly_budget_usd
     api_keys = api_keys_of(request)
@@ -139,8 +157,17 @@ async def _render(
                 why_it_matters=runtime.why_it_matters,
                 budget=budget,
             ),
-            "rates": rates,
-            "models": _model_options(pricing),
+            "profile": profile,
+            "estimate_unknown": rates is None,
+            "model_rows": model_rows(form, shortlist=app.state.shortlist, prices=app.state.prices),
+            "datalists": datalists(app.state.prices, catalogue),
+            "judge_warning": JUDGE_WARNING if judge_warning(form) else None,
+            "catalogue_at": catalogue.fetched_at if catalogue is not None else None,
+            # Shown once: a bookmarked ?tested= link never brings an old result back.
+            "model_tests": {tested: model_tests.pop(tested)} if tested in model_tests else {},
+            "model_list_flash": MODEL_LIST.get(request.query_params.get("models", "")),
+            "price_text": price_text,
+            "provider_names": PROVIDER_NAMES,
             "spent": spent,
             "spent_pct": 100.0 if budget <= 0 else min(100.0, 100.0 * spent / budget),
             "over_budget": spent >= budget,
@@ -165,8 +192,13 @@ async def settings_page(request: Request) -> HTMLResponse:
 async def save_settings(request: Request) -> Response:
     raw = await request.form()
     form = {key: value for key, value in raw.items() if isinstance(value, str)}
+    store = store_of(request)
     parsed = parse_settings_form(
-        form, models_by_provider=_models_by_provider(request.app.state.pricing)
+        form,
+        current=await load_runtime_settings(store),
+        prices=request.app.state.prices,
+        catalogue=request.app.state.catalogue.current,
+        keys=await api_keys_of(request).available(),
     )
     if not parsed.ok:
         return await _render(
@@ -174,7 +206,7 @@ async def save_settings(request: Request) -> Response:
         )
     try:
         # Step 1 validates everything again and saves nothing on error.
-        await update_runtime_settings(store_of(request), **parsed.values)
+        await update_runtime_settings(store, **parsed.values)
     except ValidationError as exc:
         errors = {
             str(e["loc"][0]) if e["loc"] else "form": "This value was refused."
@@ -239,3 +271,64 @@ async def refresh_now(request: Request) -> Response:
     app.state.background.add(task)
     task.add_done_callback(app.state.background.discard)
     return RedirectResponse("/settings?run=started#run", status_code=303)
+
+
+@router.post("/settings/models/test")
+async def test_model(request: Request) -> Response:
+    """One tiny structured call to a row's (provider, model), from the Settings form as it is
+    now (saved or not). htmx gets the result partial; without JS, a redirect shows it."""
+    raw = await request.form()
+    form = {key: value for key, value in raw.items() if isinstance(value, str)}
+    job = form.get("test_job", "")
+    if job not in JOB_NAMES:
+        raise HTTPException(status_code=404, detail="There is no such job.")
+    app: FastAPI = request.app
+    provider, model = form.get(f"{job}_provider", ""), effective_model(form, job)
+    lock: asyncio.Lock = app.state.run_lock
+    if lock.locked():  # a run's Budget would not see the test's spend: never race it
+        result = ModelTestResult(job, provider, model, ok=False, called=False, message=RUN_BUSY)
+    else:
+        async with lock:
+            store = store_of(request)
+            budget = Budget(
+                store,
+                app.state.pricing,
+                app.state.deps.clock,
+                await load_runtime_settings(store),
+                tz=app.state.settings.tz,
+                prices=app.state.prices,
+            )
+            await budget.refresh()
+            result = await run_model_test(
+                job,
+                provider,
+                model,
+                client_for=app.state.model_client,
+                prices=app.state.prices,
+                catalogue=app.state.catalogue.current,
+                keys=await api_keys_of(request).available(),
+                budget=budget,
+            )
+    if result.called:  # validated by now: a known catalogue or pricing.yaml id
+        outcome = "ok" if result.ok else "failed"
+        log.info("model test for %s: %s:%s %s", job, result.provider, result.model, outcome)
+    else:  # the typed id may be anything, even a pasted key: never log it
+        log.info("model test for %s: refused", job)
+    if is_htmx(request):
+        return partial(
+            request,
+            "partials/model_test.html",
+            {"t": result, "price_text": price_text, "provider_names": PROVIDER_NAMES},
+        )
+    app.state.model_tests[job] = result
+    return RedirectResponse(f"/settings?tested={job}#model-{job}", status_code=303)
+
+
+@router.post("/settings/models/refresh")
+async def refresh_model_list(request: Request) -> Response:
+    app: FastAPI = request.app
+    if await app.state.refresh_model_list():
+        outcome = "refreshed"
+    else:
+        outcome = "kept" if app.state.catalogue.current is not None else "failed"
+    return RedirectResponse(f"/settings?models={outcome}#models", status_code=303)

@@ -11,7 +11,9 @@ A self-hosted, high-signal AI news feed. It collects news from AI labs and from 
 - An AI judge (Claude Haiku by default; optional TypeSafe Jev) scores signal and junk; duplicates become one story with every source linked (a consolidation pass merges stories that report the same event). Posts from people on X are kept out of news stories and shown on their own X page (last 7 days, newest first).
 - Story summaries with an optional "why it matters" line, and a daily briefing.
 - A hard monthly AI budget (default $5), checked before every call.
-- Settings page: run frequency, caps, models, write-only API keys, spend meter.
+- Each AI job (judge, summary writer, briefing writer, duplicate merger) can use its own provider: Anthropic (default), OpenAI or OpenRouter. Settings offers a priced shortlist (`config/models.yaml`), any other priced model with structured output by typing its id, and a Test button that makes one tiny, budget-checked call.
+- A Compare page runs 2 to 4 models over the same recent news with the production prompts, under its own spend cap, and shows how they differ: agreement with the current judge, your thumbs and your labels, or summaries side by side. One click makes the winner the production model.
+- Settings page: run frequency, caps, models, write-only API keys (each tested before it is saved), spend meter, cost estimates priced with the chosen models.
 - Wide "lead + grid" layout on desktop, single column on phones; an Auto / Light / Dark theme toggle remembered per browser.
 - One owner password; lab-only behind a shared Caddy with HTTPS.
 
@@ -46,6 +48,8 @@ All settings come from `.env` (copy `.env.example`; mode 600; never commit it). 
 | `ANTHROPIC_API_KEY` | empty (secret) | Fallback Claude key; a key saved on the Settings page wins. |
 | `RESEARCH_ENGINE_API_KEY` | empty (secret) | Fallback research-engine key (its `API_KEY`). |
 | `TYPESAFE_API_KEY` | empty (secret) | Only for the optional Jev judge. |
+| `OPENAI_API_KEY` | empty (secret) | Fallback OpenAI key, only for jobs set to OpenAI. |
+| `OPENROUTER_API_KEY` | empty (secret) | Fallback OpenRouter key, only for jobs set to OpenRouter. |
 | `RESEARCH_ENGINE_URL` | `http://research-engine-app:8000` | research-engine over the shared `proxy` network. |
 | `DB_PATH` | `data/ai-newsdesk.sqlite` | SQLite file for local runs. Compose fixes it to `/data/ai-newsdesk.sqlite` on the `app-data` volume. |
 | `TZ` | `Europe/London` | Time zone for schedules and the budget month. |

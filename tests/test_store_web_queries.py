@@ -10,6 +10,7 @@ from ai_newsdesk.models import (
     Purpose,
     SourceKind,
     SourceResult,
+    TokenTotals,
     Trust,
     Usage,
     UsageStats,
@@ -212,3 +213,31 @@ async def test_stories_say_whether_any_item_was_scored(store: Store) -> None:
     assert (today[failed].scored, today[reviewed].scored) == (False, True)
     by_id = await store.stories_by_ids([failed, reviewed])
     assert (by_id[failed].scored, by_id[reviewed].scored) == (False, True)
+
+
+async def test_usage_last_days_sums_tokens_by_purpose(store: Store) -> None:
+    """Estimates price the last week's tokens with each job's chosen model (multi-provider)."""
+    for purpose, tokens in (
+        (Purpose.REVIEW, (100, 20, 300, 40)),
+        (Purpose.REVIEW, (1, 2, 3, 4)),
+        (Purpose.WRITE, (50, 10, 0, 0)),
+    ):
+        usage = Usage(
+            provider="openrouter",
+            model="google/gemini-3.8-flash",
+            purpose=purpose,
+            input_tokens=tokens[0],
+            output_tokens=tokens[1],
+            cache_read_tokens=tokens[2],
+            cache_write_tokens=tokens[3],
+        )
+        await store.add_spend(usage, 0.01, NOW - timedelta(hours=1))
+    old = Usage(provider="anthropic", model="m", purpose=Purpose.WRITE, input_tokens=999)
+    await store.add_spend(old, 1.0, NOW - timedelta(days=9))
+
+    stats = await store.usage_last_days(NOW)
+    assert stats.review_tokens == TokenTotals(
+        input_tokens=101, output_tokens=22, cache_read_tokens=303, cache_write_tokens=44
+    )
+    assert stats.write_tokens == TokenTotals(input_tokens=50, output_tokens=10)
+    assert stats.briefing_tokens == TokenTotals()

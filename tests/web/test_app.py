@@ -8,12 +8,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from ai_newsdesk import taste
-from ai_newsdesk.app import create_app
+from ai_newsdesk.app import create_app, nightly_jobs
 from ai_newsdesk.clock import FixedClock
 from ai_newsdesk.normalise import canonical_url
 from tests.web.fakes import fake_ctx_factory
-from tests.web.support import BASE_URL, CONFIG_DIR, NOW, make_settings, run
+from tests.web.support import BASE_URL, CONFIG_DIR, NOW, fixture_catalogue, make_settings, run
 
 
 class FakeScheduler:
@@ -107,11 +106,12 @@ def test_scheduler_starts_and_stops_with_the_nightly_taste_job(
         key_testers={},
         config_dir=CONFIG_DIR,
         clock=FixedClock(NOW),
+        catalogue_fetch=fixture_catalogue,
     )
     with TestClient(app, base_url=BASE_URL) as c:
         assert c.get("/health").json()["scheduler"] is True
         assert app.state.run_lock is app.state.scheduler.lock
-        assert app.state.scheduler.kwargs == {"nightly_fn": taste.nightly}
+        assert set(app.state.scheduler.kwargs) == {"nightly_fn"}
     assert FakeScheduler.events == ["start", "stop"]
 
 
@@ -126,6 +126,7 @@ def test_disabled_scheduler_is_never_started(
         key_testers={},
         config_dir=CONFIG_DIR,
         clock=FixedClock(NOW),
+        catalogue_fetch=fixture_catalogue,
     )
     with TestClient(app, base_url=BASE_URL) as c:
         assert c.get("/health").json()["scheduler"] is False
@@ -139,3 +140,130 @@ def test_rebuild_context_hands_the_new_context_to_the_scheduler(
     run(anon, app.state.rebuild_context)
     assert app.state.ctx is not before
     assert app.state.scheduler.ctx is app.state.ctx
+
+
+# ---- multi-provider: the model catalogue at start-up and in the nightly chain ---------------
+
+
+def _app(tmp_path: Path, fetch: Any, **overrides: Any) -> FastAPI:
+    return create_app(
+        make_settings(tmp_path, **overrides),
+        ctx_factory=fake_ctx_factory,
+        key_testers={},
+        config_dir=CONFIG_DIR,
+        clock=FixedClock(NOW),
+        catalogue_fetch=fetch,
+    )
+
+
+def _settle(client: TestClient, app: FastAPI) -> None:
+    """Wait for the start-up background tasks (the catalogue refresh) to finish."""
+
+    async def wait() -> None:
+        await asyncio.gather(*list(app.state.background), return_exceptions=True)
+
+    run(client, wait)
+
+
+def test_startup_refreshes_a_missing_catalogue_in_the_background(tmp_path: Path) -> None:
+    calls: list[int] = []
+
+    async def fetch() -> object:
+        calls.append(1)
+        return await fixture_catalogue()
+
+    app = _app(tmp_path, fetch)
+    with TestClient(app, base_url=BASE_URL) as c:
+        _settle(c, app)
+        assert calls == [1]
+        assert app.state.catalogue.current is not None
+        assert "openai/gpt-5.4-nano" in app.state.catalogue.current.ids()
+        # The shared PriceBook sees the refreshed catalogue straight away.
+        assert app.state.prices.is_priced("openrouter", "google/gemini-3.8-flash")
+        assert app.state.deps.prices is app.state.prices
+        assert app.state.ctx.budget is not None
+
+    # A fresh stored copy is loaded at the next start-up and not fetched again.
+    again = _app(tmp_path, fetch)
+    with TestClient(again, base_url=BASE_URL) as c:
+        _settle(c, again)
+        assert calls == [1]
+        assert again.state.catalogue.current is not None
+
+
+def test_a_failed_startup_refresh_never_stops_the_app(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def down() -> object:
+        raise ConnectionError("no route")
+
+    app = _app(tmp_path, down)
+    with TestClient(app, base_url=BASE_URL) as c:
+        _settle(c, app)
+        assert c.get("/health").status_code == 200
+        assert app.state.catalogue.current is None
+        assert app.state.prices.is_priced("anthropic", "claude-haiku-5-5")
+        assert not app.state.prices.is_priced("openrouter", "google/gemini-3.8-flash")
+    assert "model catalogue refresh failed" in caplog.text
+
+
+def test_real_context_budget_prices_through_the_shared_price_book(tmp_path: Path) -> None:
+    app = create_app(
+        make_settings(tmp_path),
+        key_testers={},
+        config_dir=CONFIG_DIR,
+        clock=FixedClock(NOW),
+        catalogue_fetch=fixture_catalogue,
+    )
+    with TestClient(app, base_url=BASE_URL) as c:
+        _settle(c, app)
+        assert app.state.ctx.budget.prices is app.state.prices
+
+
+async def test_nightly_jobs_refresh_the_catalogue_in_the_background(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order: list[str] = []
+    release = asyncio.Event()
+
+    async def fake_taste(ctx: object) -> None:
+        order.append("taste")
+        raise RuntimeError("taste failed")
+
+    class Cat:
+        async def refresh(self) -> bool:
+            await release.wait()  # a slow fetch
+            order.append("catalogue")
+            return True
+
+    monkeypatch.setattr("ai_newsdesk.app.taste.nightly", fake_taste)
+    background: set[asyncio.Task[None]] = set()
+    job = nightly_jobs(Cat(), background)  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError):
+        await job(object())  # type: ignore[arg-type]
+    # The job (which runs under the scheduler lock) returned without waiting for the fetch,
+    # and a failed taste refit never skips the refresh.
+    assert order == ["taste"]
+    assert len(background) == 1
+    release.set()
+    await asyncio.gather(*list(background))
+    assert order == ["taste", "catalogue"]
+    assert background == set()
+
+
+def test_startup_never_waits_for_the_catalogue_fetch(tmp_path: Path) -> None:
+    started: list[int] = []
+
+    async def hang() -> object:
+        started.append(1)
+        await asyncio.Event().wait()  # never set: only shutdown's cancel ends it
+        return {}
+
+    app = _app(tmp_path, hang)
+    with TestClient(app, base_url=BASE_URL) as c:
+        assert c.get("/health").status_code == 200
+        run(c, asyncio.sleep, 0.01)  # let the fetch start
+        assert app.state.catalogue.current is None
+        assert len(app.state.background) == 1
+    assert started == [1]
+    assert app.state.background == set()  # cancelled cleanly at shutdown

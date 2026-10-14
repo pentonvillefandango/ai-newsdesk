@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from ai_newsdesk.web import (
     routes_briefing,
+    routes_compare,
     routes_health,
     routes_settings,
     routes_sources,
@@ -23,6 +24,7 @@ def build_router() -> APIRouter:
         routes_x.router,
         routes_sources.router,
         routes_settings.router,
+        routes_compare.router,
     ):
         router.include_router(sub)
     return router

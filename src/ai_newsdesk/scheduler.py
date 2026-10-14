@@ -1,6 +1,7 @@
 """In-process scheduler: collection runs on evenly spaced slots from 00:00 in TZ, the daily
 briefing after briefing_time, and nightly upkeep after 03:30. Settings are re-read every tick,
-and one asyncio.Lock stops any two jobs from overlapping. A briefing that fails (returns False
+and one asyncio.Lock stops any two jobs from overlapping (a scheduled run waits up to 20 min
+for it; a manual one does not wait). A briefing that fails (returns False
 or raises) is retried every 30 minutes, at most 6 times per local day."""
 
 from __future__ import annotations
@@ -24,6 +25,9 @@ DEFAULT_BRIEFING_AT = time(7, 0)
 NIGHTLY_AT = time(3, 30)
 BRIEFING_RETRY_AFTER = timedelta(minutes=30)
 BRIEFING_MAX_ATTEMPTS = 6  # per local day
+# A scheduled run waits this long for the lock (a Settings Test or a comparison may hold it)
+# before its slot is skipped. Manual runs never wait: they report "busy" at once.
+SCHEDULE_LOCK_WAIT_S = 20 * 60
 
 RunFn = Callable[[PipelineContext, str], Awaitable[RunReport]]
 BriefingFn = Callable[[PipelineContext, date], Awaitable[bool]]
@@ -77,12 +81,18 @@ class Scheduler:
         briefing_fn: BriefingFn | None = None,
         nightly_fn: NightlyFn | None = None,
         tick_seconds: float = 60.0,
+        schedule_wait_s: float = SCHEDULE_LOCK_WAIT_S,
     ) -> None:
         self.ctx = ctx
         self._run_fn: RunFn = run_fn or pipeline.run_once
         self._briefing_fn: BriefingFn = briefing_fn or pipeline.run_briefing
         self._nightly_fn = nightly_fn
         self._tick_seconds = tick_seconds
+        self._schedule_wait_s = schedule_wait_s
+        # Collection runs finished (any trigger, ok or not), so a scheduled run that waited
+        # behind one can tell, even one already going when it started waiting. Other lock
+        # holders (a Settings Test, a comparison) don't count.
+        self._runs_finished = 0
         self.lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
         self._last_slot: datetime | None = None
@@ -120,11 +130,39 @@ class Scheduler:
             await asyncio.sleep(self._tick_seconds)
 
     async def run_now(self, trigger: str = "manual") -> RunReport | None:
+        if trigger == "schedule":
+            return await self._run_when_free(trigger)
         if self.lock.locked():
             log.info("a job is already running; %s run skipped", trigger)
             return None
         async with self.lock:
-            return await self._run_fn(self.ctx, trigger)
+            try:
+                return await self._run_fn(self.ctx, trigger)
+            finally:
+                self._runs_finished += 1
+
+    async def _run_when_free(self, trigger: str) -> RunReport | None:
+        """Wait for the lock, at most `schedule_wait_s`, then run; skip the slot if it stays
+        held. A timeout never leaves the lock held (Lock.acquire hands it on when cancelled).
+        If a collection run happened while waiting, this slot is skipped: it would find little."""
+        runs_before = self._runs_finished
+        try:
+            await asyncio.wait_for(self.lock.acquire(), self._schedule_wait_s)
+        except TimeoutError:
+            log.warning(
+                "the lock was held for %.0f s; %s run skipped", self._schedule_wait_s, trigger
+            )
+            return None
+        try:
+            if self._runs_finished != runs_before:
+                log.info("a run finished while waiting; %s run skipped", trigger)
+                return None
+            try:
+                return await self._run_fn(self.ctx, trigger)
+            finally:
+                self._runs_finished += 1
+        finally:
+            self.lock.release()
 
     def _may_try_briefing(self, day: date, now: datetime) -> bool:
         if day != self._briefing_try_day:

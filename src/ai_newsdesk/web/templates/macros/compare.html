@@ -1,0 +1,13 @@
+{# Small formatters for the Compare results. #}
+{% macro pct(rate, n) %}{% if rate is none %}<span class="muted">—</span>{% else %}{{ (rate * 100)|round|int }}%<span class="muted"> of {{ n }}</span>{% endif %}{% endmacro %}
+{% macro latency(ms) %}{% if ms is none %}<span class="muted">—</span>{% elif ms < 1000 %}{{ ms|round|int }} ms{% else %}{{ "%.1f"|format(ms / 1000) }} s{% endif %}{% endmacro %}
+{% macro model_name(m, provider_names) %}<span class="compare-model"><span class="compare-model__id">{{ m.model }}</span> <span class="compare-model__provider">{{ provider_names.get(m.provider, m.provider) }}</span></span>{% endmacro %}
+{% macro use_button(run, m, in_use, csrf_token) %}
+{% if m.key == in_use %}<span class="muted">In use</span>{% else %}
+<form class="inline-form" method="post" action="/compare/runs/{{ run.id }}/use">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="model_key" value="{{ m.key }}">
+  <button class="button button--quiet button--small" type="submit">Use this model</button>
+</form>
+{% endif %}
+{% endmacro %}

@@ -1,10 +1,10 @@
-"""Story consolidation (feedback-1, A1): one Claude call merges open stories that report the
+"""Story consolidation (feedback-1, A1): one model call merges open stories that report the
 same event.
 
 Items are clustered batch by batch, so an item can only join a story that already existed when
 its batch was clustered, and the title-based fall-back is strict. Duplicate stories therefore
 slip through, most of all on a first run. After clustering and before writing, this pass offers
-the open news stories (headlines only) to Claude once, validates the groups it returns and folds
+the open news stories (headlines only) to the model once, validates the groups it returns and folds
 each group into its best story. Failures are local: the run always carries on.
 """
 
@@ -16,20 +16,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-import anthropic
 from pydantic import BaseModel, Field
 
 from ai_newsdesk.budget import Budget
-from ai_newsdesk.claude_common import (
-    SCHEMA_OVERHEAD_TOKENS,
-    describe_error,
-    estimate_tokens,
-    safe_json,
-    usage_from_response,
-    worst_case_usd,
-)
+from ai_newsdesk.llm.base import ModelClient, describe_error, safe_json
 from ai_newsdesk.models import ConsolidationStory, Purpose, Usage
-from ai_newsdesk.pricing import Pricing
 from ai_newsdesk.protocols import Consolidator
 from ai_newsdesk.store.store import Store
 
@@ -83,45 +74,35 @@ def pick_keep(group: Sequence[int], stories: dict[int, ConsolidationStory]) -> i
     return min(group, key=lambda i: (-stories[i].score, stories[i].first_seen_at, i))
 
 
-class HaikuConsolidator:
-    def __init__(
-        self,
-        client: anthropic.AsyncAnthropic,
-        model: str,
-        pricing: Pricing,
-        *,
-        max_tokens: int = MAX_TOKENS,
-    ) -> None:
-        self._client = client
-        self.model = model
-        self._pricing = pricing
+class LLMConsolidator:
+    def __init__(self, client: ModelClient, *, max_tokens: int = MAX_TOKENS) -> None:
+        self.client = client
+        self.model = client.model
         self.max_tokens = max_tokens
 
     def worst_case_cost(self, stories: list[ConsolidationStory]) -> float:
-        tokens = estimate_tokens(CONSOLIDATE_SYSTEM + render_stories(stories))
-        return worst_case_usd(
-            self._pricing, self.model, tokens + SCHEMA_OVERHEAD_TOKENS, self.max_tokens
+        return self.client.worst_case_usd(
+            system=CONSOLIDATE_SYSTEM, user=render_stories(stories), max_tokens=self.max_tokens
         )
 
     async def find_groups(
         self, stories: list[ConsolidationStory]
     ) -> tuple[list[list[int]], list[Usage]]:
         try:
-            response = await self._client.messages.parse(
-                model=self.model,
+            answer = await self.client.structured(
+                system=CONSOLIDATE_SYSTEM,
+                user=render_stories(stories),
+                schema=StoryGroups,
                 max_tokens=self.max_tokens,
-                system=[{"type": "text", "text": CONSOLIDATE_SYSTEM}],
-                messages=[{"role": "user", "content": render_stories(stories)}],
-                output_format=StoryGroups,
-                output_config={"effort": "low"},
+                purpose=Purpose.REVIEW,
             )
         except Exception as exc:  # never raises; the next run tries again
             log.warning("consolidation call failed: %s", describe_error(exc))
             return [], []
-        usage = [usage_from_response(response, self.model, Purpose.REVIEW)]
-        parsed = response.parsed_output
-        if response.stop_reason == "refusal" or parsed is None:
-            log.warning("consolidation unusable (stop_reason=%s)", response.stop_reason)
+        usage = [answer.usage] if answer.usage is not None else []
+        parsed = answer.parsed
+        if answer.refused or parsed is None:
+            log.warning("consolidation unusable: %s", answer.error)
             return [], usage
         return [list(g) for g in parsed.groups], usage
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +25,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = REPO_ROOT / "config"
 BASE_URL = "https://testserver"  # https so the Secure cookies are sent back
 HX = {"HX-Request": "true"}
+CATALOGUE_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "openrouter" / "models.json"
+
+
+async def fixture_catalogue() -> object:
+    """Stands in for the OpenRouter models fetch: tests never call the real API."""
+    return json.loads(CATALOGUE_FIXTURE.read_text())
 
 
 def make_settings(tmp_path: Path, **overrides: Any) -> Settings:

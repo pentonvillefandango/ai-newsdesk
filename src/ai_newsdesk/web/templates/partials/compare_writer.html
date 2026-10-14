@@ -1,0 +1,68 @@
+{% from "macros/compare.html" import latency, model_name, use_button %}
+<section class="compare-results" id="writer-results" aria-labelledby="summary-title">
+  <h2 id="summary-title">By model</h2>
+  <p class="field__hint">Pick the summary you prefer for each story below; the tally decides the best model.</p>
+  <p class="scroll-hint" aria-hidden="true">Swipe the table sideways to see every column.</p>
+  <div class="table-scroll">
+    <table class="table compare-table" id="compare-summary">
+      <thead>
+        <tr>
+          <th scope="col">Model</th>
+          <th scope="col">Preferred</th>
+          <th scope="col">Written</th>
+          <th scope="col">Failures</th>
+          <th scope="col">Cost</th>
+          <th scope="col">Avg latency</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in summary %}
+        <tr{% if s.key == best %} class="is-best"{% endif %}>
+          <th scope="row">{{ model_name(s, provider_names) }}{% if s.key == best %} <span class="chip-tag">Best</span>{% endif %}<div class="compare-use">{{ use_button(run, s, in_use, csrf_token) }}</div></th>
+          <td>{{ s.preferred }}</td>
+          <td>{{ s.written }}</td>
+          <td>{{ s.failures }}{% if s.not_run %}<span class="muted">, {{ s.not_run }} not run</span>{% endif %}</td>
+          <td>{{ usd(s.cost_usd) }}</td>
+          <td>{{ latency(s.avg_latency_ms) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="stories-title">By story</h2>
+  <div class="compare-stories">
+    {% for row in story_rows %}
+    {% set story = stories[row.story_id] %}
+    <article class="compare-story" id="story-{{ row.story_id }}" aria-labelledby="story-{{ row.story_id }}-title">
+      <h3 id="story-{{ row.story_id }}-title">{% if story.sources %}<a href="{{ story.sources[0].url|safe_url }}" rel="noopener noreferrer" target="_blank">{{ story.headline }}</a>{% else %}{{ story.headline }}{% endif %}</h3>
+      {% if story.summary %}<p class="compare-story__now"><span class="muted">Now on Today:</span> {{ story.summary }}</p>{% endif %}
+      <div class="table-scroll">
+        <div class="side-by-side">
+          {% for m in run.models %}
+          {% set text = row.texts[loop.index0] %}
+          {% set chosen = prefs.get(row.story_id) == m.key %}
+          <div class="side-by-side__col{% if chosen %} is-preferred{% endif %}">
+            <p class="side-by-side__model">{{ model_name(m, provider_names) }}</p>
+            {% if text %}
+            <p class="side-by-side__text">{{ text.summary }}</p>
+            {% if text.why_it_matters %}<p class="side-by-side__why">{{ text.why_it_matters }}</p>{% endif %}
+            <form method="post" action="/compare/runs/{{ run.id }}/prefer" hx-post="/compare/runs/{{ run.id }}/prefer" hx-target="#writer-results" hx-swap="outerHTML">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="story_id" value="{{ row.story_id }}">
+              <input type="hidden" name="model_key" value="{{ m.key }}">
+              <button class="label-button" type="submit" aria-pressed="{{ 'true' if chosen else 'false' }}">{{ "Preferred" if chosen else "Prefer this" }}</button>
+            </form>
+            {% elif row.states[loop.index0] == "failed" %}
+            <p class="verdict verdict--failed">Failed</p>
+            {% else %}
+            <p class="muted">Not run</p>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>

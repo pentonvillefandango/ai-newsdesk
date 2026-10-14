@@ -94,6 +94,25 @@ Recovery: an interrupted deploy leaves `current` on the new commit with no log e
   make health
   ```
 
+## Model catalogue and prices
+
+- Anthropic and TypeSafe prices come from `config/pricing.yaml`. OpenRouter prices (and OpenAI prices not listed in `pricing.yaml`) come from OpenRouter's public model list (`https://openrouter.ai/api/v1/models`, no key), filtered to priced models with structured output (variant ids such as `:free` or `:batch` are dropped) and stored in the `settings` table as `model_catalogue`.
+- The list is refreshed at start-up when it is older than 24 hours (in the background) and nightly after 03:30. A failed fetch is logged (`model catalogue refresh failed`) and the last good copy is kept; with no copy at all, only `pricing.yaml` models are usable.
+- Spend from OpenRouter is recorded at the cost OpenRouter reports for each call.
+- Settings shows the list's age ("Model list updated 3 h ago") and a **Refresh model list** button. A failed refresh says so and keeps the previous list.
+- The shortlist offered on Settings is `config/models.yaml`: model ids per provider (`anthropic`, `openai`, `openrouter`), in display order. Edit it in the repo and deploy; an id must be unique within its provider. A listed id with no known price shows as "no price yet" and can't be chosen. Any other usable model can be typed into a job's "Other model" box.
+- Settings' **Test** button makes one structured call to the chosen model (at most 512 output tokens), checked against the budget first and recorded as review spend. It is refused, with nothing sent, when the model is unpriced, its key is missing, the budget can't cover it or a run is in progress (a test holds the run lock, so its spend always counts against the cap). The call gets one attempt and 30 seconds; a test that times out is not recorded as spend (it can cost at most one test's worst case). A scheduled run that falls due while the lock is held waits for it, up to 20 minutes, and is skipped with a log line (`the lock was held for 1200 s; schedule run skipped`) only after that; Refresh now still says a run is already going. If a collection run (Refresh now, say) finished while it waited, the scheduled run is skipped instead (`a run finished while waiting; schedule run skipped`); after a Test it runs as normal.
+- Choosing a judge other than Claude Haiku on Anthropic shows a warning: Haiku is the judge tested on 623 labelled items (ADR-0001, ADR-0002).
+- Each AI job (judge, summary writer, briefing writer, duplicate-merger) has its own provider and model. A saved choice that can't be used at start-up (its price is unknown, or its OpenAI or OpenRouter key is missing) never stops the app: that job uses Claude Haiku and the log says `<job> model <provider>:<model> is unusable (<reason>)`. After each successful list refresh the jobs are rebuilt when any job uses OpenAI or OpenRouter, so a model that was waiting for the list is picked up.
+- The duplicate-merger has its own model setting (default Claude Haiku). Before multi-provider it reused the judge's Claude model (or the writer's), so an install whose judge was on Sonnet or Opus merges with Haiku after the upgrade until the merger's model is changed on Settings.
+
+## Compare page
+
+- **Compare** (after Settings) runs 2 to 4 models over the same sample with the production prompts and batches: the judge over the last reviewed or queued news items of 7 days (default 30, up to 100), the summary writer over the top stories of 48 hours (default 5, up to 15). Every provider needs its key here, Anthropic included.
+- **Check cost** shows the maximum cost (every call's worst case); **Run comparison** stays disabled until it fits the comparison's cap (default $0.25, $0.01 to $5.00, never more than the money left this month). Each call is checked against both the cap and the monthly budget before it is sent and recorded as review or write spend; a model whose next call doesn't fit stops there (status "Stopped at the cap", the rest "Not run").
+- A comparison holds the run lock, like a collection run. Starting one while a run is going says so at once and creates nothing. Each call gets 120 seconds and no SDK retry (a retried request could be billed twice), and the whole comparison 15 minutes; past that it stops as failed and frees the lock (a scheduled run waiting for the lock then goes ahead). A call that times out is not recorded as spend but counts its worst case against the comparison's cap. A comparison cut off by a restart is marked failed at start-up.
+- Results live in `compare_runs` and `compare_results`; nothing is written to items or stories. Labels (Junk / Show / Important, one per item, in `labels`) are kept and reused by later comparisons; preferred summaries are in `writer_prefs`. **Use this model** applies the same checks as Settings and switches the production judge or summary writer from the next run.
+
 ## Known limitations
 
 - **Global login lockout.** The app runs uvicorn with `--no-proxy-headers`, so it never trusts `X-Forwarded-*` (any container on the shared `proxy` network could forge them). Because it cannot tell clients apart, the login limiter is global: 5 wrong passwords in 15 minutes, from anyone, lock the login for everyone until the oldest failure is 15 minutes old (the page says how long to wait). Redirects are relative paths and the `__Host-` cookies are always `Secure`, so neither depends on the forwarded scheme; a trailing-slash URL (such as `/settings/`) is a 404, never an `http://` redirect. Trade-off, accepted for a single-owner lab tool: a co-tenant container on the `proxy` network (or anyone in the lab subnet) can lock the owner out for up to 15 minutes by guessing wrong.
@@ -111,7 +130,7 @@ sed -i "s/^SESSION_SECRET=.*/SESSION_SECRET=$(openssl rand -hex 32)/" .env && ma
 
 - `SESSION_SECRET`: everyone is logged out.
 - `SECRETS_KEY`: it encrypts the API keys saved on the Settings page. After rotating it those saved keys can't be decrypted: the app falls back to the `.env` keys, and you re-enter the keys on the Settings page.
-- API keys (`ANTHROPIC_API_KEY`, `RESEARCH_ENGINE_API_KEY`, `TYPESAFE_API_KEY`): change them in `.env` and `make deploy`, or save them on the Settings page (a saved key wins over `.env`).
+- API keys (`ANTHROPIC_API_KEY`, `RESEARCH_ENGINE_API_KEY`, `TYPESAFE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`): change them in `.env` and `make deploy`, or save them on the Settings page (a saved key wins over `.env`).
 
 Never print or commit `.env`. Check values by length only, e.g. `v="$(grep -m1 '^SECRETS_KEY=' .env | cut -d= -f2-)"; echo "${#v}"; v=`.
 

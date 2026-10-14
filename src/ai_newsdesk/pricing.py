@@ -20,7 +20,7 @@ class UnknownModelError(KeyError):
 
 
 class ModelPrice(BaseModel):
-    provider: Literal["anthropic", "typesafe"]
+    provider: Literal["anthropic", "openai", "typesafe"]
     input_per_mtok: float = Field(ge=0)
     output_per_mtok: float = Field(ge=0)
 

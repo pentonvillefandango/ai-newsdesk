@@ -7,8 +7,10 @@ from ai_newsdesk.claude_common import (
     safe_json,
     worst_case_usd,
 )
-from ai_newsdesk.judges.haiku import BatchJudgement, CategoryName, HaikuJudge, ItemJudgement
+from ai_newsdesk.judges.llm import BatchJudgement, CategoryName, ItemJudgement, LLMJudge
 from ai_newsdesk.judges.prompts import JUDGE_SYSTEM, NO_TEXT, render_items
+from ai_newsdesk.llm.anthropic_client import AnthropicClient
+from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.models import Category, Purpose, ReviewInput, SourceKind, StoryRef, Trust
 from ai_newsdesk.pricing import Pricing
 from tests.fake_anthropic import (
@@ -21,6 +23,7 @@ from tests.fake_anthropic import (
 )
 
 PRICING = Pricing.load(Path(__file__).resolve().parents[1] / "config" / "pricing.yaml")
+PRICES = PriceBook(PRICING)
 MODEL = "claude-haiku-5-5"
 
 
@@ -52,8 +55,8 @@ def judgement(
     )
 
 
-def judge_for(fake: FakeAnthropic) -> HaikuJudge:
-    return HaikuJudge(as_client(fake), MODEL, PRICING)
+def judge_for(fake: FakeAnthropic, *, batch_size: int = 10) -> LLMJudge:
+    return LLMJudge(AnthropicClient(as_client(fake), MODEL, PRICES), batch_size=batch_size)
 
 
 async def test_request_shape() -> None:
@@ -171,7 +174,7 @@ async def test_rate_limit_fails_only_that_batch() -> None:
 
 async def test_status_connection_and_unexpected_errors_never_raise() -> None:
     fake = FakeAnthropic([server_error(), connection_error(), ValueError("bad json")])
-    judge = HaikuJudge(as_client(fake), MODEL, PRICING, batch_size=1)
+    judge = judge_for(fake, batch_size=1)
     result = await judge.review([inp(1), inp(2), inp(3)])
     assert result.failed_item_ids == [1, 2, 3]
     assert result.usage == []
