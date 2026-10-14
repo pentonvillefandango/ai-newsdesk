@@ -1,0 +1,36 @@
+{% set s = row.source %}
+{% set spec = editable_kinds.get(s.kind) %}
+<li class="source source--editing" id="source-{{ s.id }}">
+  <form class="form" method="post" action="/sources/{{ s.id }}" hx-post="/sources/{{ s.id }}" hx-target="#source-{{ s.id }}" hx-swap="outerHTML">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <p class="source__name">Edit {{ s.name }}</p>
+    <div class="grid-2">
+      <div class="field">
+        <label for="name-{{ s.id }}">Name</label>
+        <input id="name-{{ s.id }}" name="name" type="text" value="{{ form.name }}" required maxlength="80"{% if errors.name %} aria-invalid="true" aria-describedby="name-{{ s.id }}-error"{% endif %}>
+        {% if errors.name %}<p class="field__error" id="name-{{ s.id }}-error">{{ errors.name }}</p>{% endif %}
+      </div>
+      <div class="field">
+        <label for="trust-{{ s.id }}">Trust</label>
+        <select id="trust-{{ s.id }}" name="trust"{% if errors.trust %} aria-invalid="true"{% endif %}>
+          {% for t in trusts %}
+          <option value="{{ t.value }}"{% if form.trust == t.value %} selected{% endif %}>{{ trust_label(t) }}</option>
+          {% endfor %}
+        </select>
+        {% if errors.trust %}<p class="field__error">{{ errors.trust }}</p>{% endif %}
+      </div>
+    </div>
+    {% if spec %}
+    <div class="field">
+      <label for="value-{{ s.id }}">{{ spec[1] }}</label>
+      <input id="value-{{ s.id }}" name="value" type="text" value="{{ form.value }}" required aria-describedby="value-{{ s.id }}-hint{% if errors.value %} value-{{ s.id }}-error{% endif %}"{% if errors.value %} aria-invalid="true"{% endif %}>
+      <p class="field__hint" id="value-{{ s.id }}-hint">{{ spec[2] }}</p>
+      {% if errors.value %}<p class="field__error" id="value-{{ s.id }}-error">{{ errors.value }}</p>{% endif %}
+    </div>
+    {% endif %}
+    <div class="form__actions">
+      <button class="button" type="submit">Save changes</button>
+      <a class="button button--quiet" href="/sources#source-{{ s.id }}" hx-get="/sources/{{ s.id }}/row" hx-target="#source-{{ s.id }}" hx-swap="outerHTML">Cancel</a>
+    </div>
+  </form>
+</li>

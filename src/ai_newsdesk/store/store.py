@@ -30,6 +30,7 @@ from ai_newsdesk.models import (
     ReviewInput,
     SourceConfig,
     SourceKind,
+    SourceOverview,
     SourceResult,
     Story,
     StoryRef,
@@ -402,6 +403,36 @@ class Store:
             )
             for r in rows
         ]
+
+    async def source_overview(self, now: dt.datetime) -> list[SourceOverview]:
+        """Every source (muted ones too) with step 1's health stats plus 7-day item counts."""
+        configs = {s.id: s for s in await self.list_sources(enabled_only=False)}
+        recent = {
+            int(r["source_id"]): (int(r["items_7d"]), int(r["stories_7d"]))
+            for r in await self._all(
+                "SELECT source_id, COUNT(*) AS items_7d,"
+                " COUNT(story_id) AS stories_7d"
+                " FROM items WHERE fetched_at >= ? GROUP BY source_id",
+                (_ts(now - dt.timedelta(days=7)),),
+            )
+        }
+        rows: list[SourceOverview] = []
+        for stats in await self.source_stats():
+            src = configs.get(stats.id)
+            if src is None:  # deleted between the two reads
+                continue
+            items_7d, stories_7d = recent.get(stats.id, (0, 0))
+            rows.append(
+                SourceOverview(
+                    source=src,
+                    last_ok_at=stats.last_ok_at,
+                    last_error=stats.last_error or None,
+                    items_7d=items_7d,
+                    stories_7d=stories_7d,
+                    items_total=stats.item_count,
+                )
+            )
+        return rows
 
     # ---- items -----------------------------------------------------------------------
 

@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from ai_newsdesk.web import routes_briefing, routes_health, routes_today
+from ai_newsdesk.web import routes_briefing, routes_health, routes_sources, routes_today
 
 
 def build_router() -> APIRouter:
     router = APIRouter()
-    for sub in (routes_health.router, routes_today.router, routes_briefing.router):
+    for sub in (
+        routes_health.router,
+        routes_today.router,
+        routes_briefing.router,
+        routes_sources.router,
+    ):
         router.include_router(sub)
     return router

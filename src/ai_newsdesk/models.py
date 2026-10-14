@@ -176,3 +176,14 @@ class UnscoredItem(BaseModel):
     title: str
     published_at: datetime | None = None
     status: ItemStatus
+
+
+class SourceOverview(BaseModel):
+    """One row of the Sources page: the source plus its health and volume."""
+
+    source: SourceConfig
+    last_ok_at: datetime | None = None
+    last_error: str | None = None
+    items_7d: int = 0
+    stories_7d: int = 0
+    items_total: int = 0

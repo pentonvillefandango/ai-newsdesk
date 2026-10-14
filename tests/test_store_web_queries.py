@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from ai_newsdesk.models import ItemStatus, SourceKind, Trust
+from ai_newsdesk.models import ItemStatus, SourceKind, SourceResult, Trust
 from ai_newsdesk.store import Store
 from tests.web import seed
 
@@ -80,3 +80,39 @@ async def test_unscored_items_are_recent_failed_or_queued(store: Store) -> None:
     assert {u.status for u in got} == {ItemStatus.REVIEW_FAILED, ItemStatus.QUEUED}
     assert all(u.source_name == "Lab" and u.source_kind == SourceKind.FEED for u in got)
     assert len(await store.unscored_items(NOW, limit=1)) == 1
+
+
+async def test_source_overview_counts_items_and_reports_health(store: Store) -> None:
+    zeta = await seed.add_source(store, name="Zeta Lab")
+    await seed.add_item(
+        store,
+        source_id=zeta,
+        url="https://zeta.example/1",
+        title="New",
+        at=NOW - timedelta(hours=1),
+    )
+    await seed.add_item(
+        store,
+        source_id=zeta,
+        url="https://zeta.example/2",
+        title="Old",
+        at=NOW - timedelta(days=10),
+    )
+    await seed.add_story(
+        store, at=NOW, headline="Story", sources=[(zeta, "https://zeta.example/3", "In a story")]
+    )
+    await store.record_source_result(SourceResult(source_id=zeta, error="HTTP 503 from feed"), NOW)
+    healthy = await seed.add_source(store, name="Healthy")
+    await store.record_source_result(SourceResult(source_id=healthy), NOW)
+    muted = await seed.add_source(store, name="Alpha", enabled=False)
+
+    rows = {r.source.id: r for r in await store.source_overview(NOW)}
+    assert rows[zeta].items_total == 3
+    assert rows[zeta].items_7d == 2
+    assert rows[zeta].stories_7d == 1
+    assert rows[zeta].last_error == "HTTP 503 from feed"
+    assert rows[healthy].last_ok_at == NOW
+    assert rows[healthy].last_error is None
+    assert rows[muted].source.enabled is False
+    assert rows[muted].items_total == 0
+    assert rows[muted].last_ok_at is None
