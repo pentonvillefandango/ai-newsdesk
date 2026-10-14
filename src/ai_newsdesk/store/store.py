@@ -30,13 +30,16 @@ from ai_newsdesk.models import (
     ReviewInput,
     SourceConfig,
     SourceKind,
+    SourceOverview,
     SourceResult,
     Story,
     StoryRef,
     StorySource,
     StoryText,
     Trust,
+    UnscoredItem,
     Usage,
+    UsageStats,
     Verdict,
     WriteInput,
 )
@@ -401,6 +404,36 @@ class Store:
             )
             for r in rows
         ]
+
+    async def source_overview(self, now: dt.datetime) -> list[SourceOverview]:
+        """Every source (muted ones too) with step 1's health stats plus 7-day item counts."""
+        configs = {s.id: s for s in await self.list_sources(enabled_only=False)}
+        recent = {
+            int(r["source_id"]): (int(r["items_7d"]), int(r["stories_7d"]))
+            for r in await self._all(
+                "SELECT source_id, COUNT(*) AS items_7d,"
+                " COUNT(story_id) AS stories_7d"
+                " FROM items WHERE fetched_at >= ? GROUP BY source_id",
+                (_ts(now - dt.timedelta(days=7)),),
+            )
+        }
+        rows: list[SourceOverview] = []
+        for stats in await self.source_stats():
+            src = configs.get(stats.id)
+            if src is None:  # deleted between the two reads
+                continue
+            items_7d, stories_7d = recent.get(stats.id, (0, 0))
+            rows.append(
+                SourceOverview(
+                    source=src,
+                    last_ok_at=stats.last_ok_at,
+                    last_error=stats.last_error or None,
+                    items_7d=items_7d,
+                    stories_7d=stories_7d,
+                    items_total=stats.item_count,
+                )
+            )
+        return rows
 
     # ---- items -----------------------------------------------------------------------
 
@@ -839,6 +872,34 @@ class Store:
             totals[day] = totals.get(day, 0.0) + r["cost_usd"]
         return [(day.isoformat(), round(total, 6)) for day, total in sorted(totals.items())]
 
+    async def usage_last_days(self, now: dt.datetime, days: int = 7) -> UsageStats:
+        """Finished runs, reviewed items and spend by purpose over the last ``days`` days."""
+        since = _ts(now - dt.timedelta(days=days))
+        runs = await self._one(
+            "SELECT COUNT(*) AS n FROM runs WHERE started_at >= ? AND finished_at IS NOT NULL",
+            (since,),
+        )
+        reviewed = await self._one(
+            "SELECT COUNT(*) AS n FROM items WHERE status = 'reviewed' AND fetched_at >= ?",
+            (since,),
+        )
+        by_purpose = {
+            str(r["purpose"]): float(r["usd"])
+            for r in await self._all(
+                "SELECT purpose, COALESCE(SUM(cost_usd), 0) AS usd FROM spend"
+                " WHERE at >= ? GROUP BY purpose",
+                (since,),
+            )
+        }
+        return UsageStats(
+            days=days,
+            runs=int(runs["n"]) if runs is not None else 0,
+            items_reviewed=int(reviewed["n"]) if reviewed is not None else 0,
+            review_usd=by_purpose.get("review", 0.0),
+            write_usd=by_purpose.get("write", 0.0),
+            briefing_usd=by_purpose.get("briefing", 0.0),
+        )
+
     # ---- runs ------------------------------------------------------------------------
 
     async def start_run(self, trigger: str, at: dt.datetime) -> int:
@@ -959,3 +1020,77 @@ class Store:
         await asyncio.to_thread(dest.parent.mkdir, parents=True, exist_ok=True)
         async with self._lock, aiosqlite.connect(dest) as target:
             await self._db.backup(target)
+
+    # --- web queries (step 5) -------------------------------------------------------------
+
+    async def stories_by_ids(self, ids: list[int]) -> dict[int, Story]:
+        """Stories by ID with their sources, lead (highest signal, then lowest id) first."""
+        if not ids:
+            return {}
+        marks = ",".join("?" * len(ids))
+        rows = await self._all(
+            "SELECT id, headline, category, score, summary, why_it_matters, first_seen_at,"  # noqa: S608
+            f" last_updated_at, feedback FROM stories WHERE id IN ({marks})",
+            ids,
+        )
+        stories: dict[int, Story] = {
+            int(r["id"]): Story(
+                id=int(r["id"]),
+                headline=r["headline"],
+                category=Category(r["category"]),
+                score=float(r["score"] or 0.0),
+                summary=r["summary"],
+                why_it_matters=r["why_it_matters"],
+                first_seen_at=_req_dt(r["first_seen_at"]),
+                last_updated_at=_req_dt(r["last_updated_at"]),
+                feedback=int(r["feedback"] or 0),
+            )
+            for r in rows
+        }
+        items = await self._all(
+            "SELECT i.id AS item_id, i.story_id, i.url, i.title, i.published_at,"  # noqa: S608
+            " s.name AS source_name, s.kind AS source_kind"
+            " FROM items i JOIN sources s ON s.id = i.source_id"
+            f" WHERE i.story_id IN ({marks})"
+            " ORDER BY i.story_id, COALESCE(i.signal, -1) DESC, i.id",
+            ids,
+        )
+        for r in items:
+            story = stories.get(int(r["story_id"]))
+            if story is not None:
+                story.sources.append(
+                    StorySource(
+                        item_id=int(r["item_id"]),
+                        source_name=r["source_name"],
+                        source_kind=SourceKind(r["source_kind"]),
+                        url=r["url"],
+                        title=r["title"],
+                        published_at=_dt(r["published_at"]),
+                    )
+                )
+        return stories
+
+    async def unscored_items(
+        self, now: dt.datetime, hours: int = 24, limit: int = 30
+    ) -> list[UnscoredItem]:
+        """Recent items with no verdict, best heuristic score first."""
+        rows = await self._all(
+            "SELECT i.id AS item_id, i.url, i.title, i.published_at, i.status,"
+            " s.name AS source_name, s.kind AS source_kind"
+            " FROM items i JOIN sources s ON s.id = i.source_id"
+            " WHERE i.status IN ('review_failed', 'queued') AND i.fetched_at >= ?"
+            " ORDER BY i.heuristic_score DESC, i.fetched_at DESC, i.id DESC LIMIT ?",
+            (_ts(now - dt.timedelta(hours=hours)), limit),
+        )
+        return [
+            UnscoredItem(
+                item_id=int(r["item_id"]),
+                source_name=r["source_name"],
+                source_kind=SourceKind(r["source_kind"]),
+                url=r["url"],
+                title=r["title"],
+                published_at=_dt(r["published_at"]),
+                status=ItemStatus(r["status"]),
+            )
+            for r in rows
+        ]

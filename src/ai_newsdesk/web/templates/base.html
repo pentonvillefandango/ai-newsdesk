@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#edf1f4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121a25" media="(prefers-color-scheme: dark)">
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true,"historyCacheSize":0,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+  <title>{% block title %}Newsdesk{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+  <a class="skip" href="#main">Skip to content</a>
+  {% block masthead %}
+  <header class="masthead">
+    <div class="masthead__inner">
+      <a class="wordmark" href="/">Newsdesk</a>
+      <nav class="nav" aria-label="Main">
+        <a href="/"{% if active == "today" %} aria-current="page"{% endif %}>Today</a>
+        <a href="/briefing"{% if active == "briefing" %} aria-current="page"{% endif %}>Briefing</a>
+        <a href="/sources"{% if active == "sources" %} aria-current="page"{% endif %}>Sources</a>
+        <a href="/settings"{% if active == "settings" %} aria-current="page"{% endif %}>Settings</a>
+      </nav>
+      <form class="logout" method="post" action="/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="link-button" type="submit">Log out</button>
+      </form>
+    </div>
+  </header>
+  {% if budget_reached %}
+  <div class="banner" role="status">
+    <p><strong>This month's budget is spent.</strong> Collection carries on, but new items wait unscored until the budget resets on the 1st. <a href="/settings#spending">Change the budget</a></p>
+  </div>
+  {% endif %}
+  {% endblock %}
+  <main id="main" class="page">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

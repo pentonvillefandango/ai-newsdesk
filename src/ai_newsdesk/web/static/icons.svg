@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-thumbs-up" viewBox="0 0 24 24">
+    <g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 11v9H4.5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1H7Z"/>
+      <path d="M7 11l3.6-7.2a2 2 0 0 1 3.4 1.4V9h5a2 2 0 0 1 2 2.3l-1.2 7A2 2 0 0 1 17.8 20H7"/>
+    </g>
+  </symbol>
+  <symbol id="i-thumbs-down" viewBox="0 0 24 24">
+    <g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" transform="rotate(180 12 12)">
+      <path d="M7 11v9H4.5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1H7Z"/>
+      <path d="M7 11l3.6-7.2a2 2 0 0 1 3.4 1.4V9h5a2 2 0 0 1 2 2.3l-1.2 7A2 2 0 0 1 17.8 20H7"/>
+    </g>
+  </symbol>
+  <symbol id="i-external-link" viewBox="0 0 24 24">
+    <g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 4h6v6"/>
+      <path d="M20 4l-9 9"/>
+      <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>
+    </g>
+  </symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24">
+    <g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/>
+      <path d="M4 4v4h4"/>
+      <path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/>
+      <path d="M20 20v-4h-4"/>
+    </g>
+  </symbol>
+  <symbol id="i-x-logo" viewBox="0 0 24 24">
+    <path fill="currentColor" d="M17.8 3h3.1l-6.8 7.7L22 21h-6.2l-4.9-6.4L5.3 21H2.2l7.2-8.3L1.8 3h6.4l4.4 5.8L17.8 3Zm-1.1 16.2h1.7L7.4 4.7H5.5l11.2 14.5Z"/>
+  </symbol>
+  <symbol id="i-rss" viewBox="0 0 24 24">
+    <g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 5a14 14 0 0 1 14 14"/>
+      <path d="M5 11a8 8 0 0 1 8 8"/>
+    </g>
+    <circle cx="6" cy="18" r="1.6" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-hn" viewBox="0 0 24 24">
+    <g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3.5" y="3.5" width="17" height="17" rx="3"/>
+      <path d="M8.5 7.5 12 13l3.5-5.5"/>
+      <path d="M12 13v4"/>
+    </g>
+  </symbol>
+</svg>

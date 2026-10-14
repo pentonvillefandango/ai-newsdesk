@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Sources on Newsdesk{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1>Sources</h1>
+  <p class="lede">{{ enabled_count }} active{% if muted_count %}, {{ muted_count }} muted{% endif %}. Thumbs on stories move each source's weight between 0.3 and 2.</p>
+</header>
+{% if added %}
+<div class="notice notice--ok" role="status"><p>Source added. It is collected on the next run.</p></div>
+{% endif %}
+<details class="add-source"{% if add_errors %} open{% endif %}>
+  <summary>Add a source</summary>
+  <form class="form" method="post" action="/sources">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="grid-2">
+      <div class="field">
+        <label for="add-kind">Kind</label>
+        <select id="add-kind" name="kind"{% if add_errors.kind %} aria-invalid="true" aria-describedby="add-kind-error"{% endif %}>
+          {% for kind in editable_kinds %}
+          <option value="{{ kind.value }}"{% if add.kind == kind.value %} selected{% endif %}>{{ kind_label(kind) }}</option>
+          {% endfor %}
+        </select>
+        {% if add_errors.kind %}<p class="field__error" id="add-kind-error">{{ add_errors.kind }}</p>{% endif %}
+      </div>
+      <div class="field">
+        <label for="add-trust">Trust</label>
+        <select id="add-trust" name="trust"{% if add_errors.trust %} aria-invalid="true" aria-describedby="add-trust-error"{% endif %}>
+          {% for t in trusts %}
+          <option value="{{ t.value }}"{% if add.trust == t.value %} selected{% endif %}>{{ trust_label(t) }}</option>
+          {% endfor %}
+        </select>
+        {% if add_errors.trust %}<p class="field__error" id="add-trust-error">{{ add_errors.trust }}</p>{% endif %}
+      </div>
+    </div>
+    <div class="field">
+      <label for="add-name">Name</label>
+      <input id="add-name" name="name" type="text" value="{{ add.name }}" required maxlength="80"{% if add_errors.name %} aria-invalid="true" aria-describedby="add-name-error"{% endif %}>
+      {% if add_errors.name %}<p class="field__error" id="add-name-error">{{ add_errors.name }}</p>{% endif %}
+    </div>
+    <div class="field">
+      <label for="add-value">Address, handle, search words or repository</label>
+      <input id="add-value" name="value" type="text" value="{{ add.value }}" required aria-describedby="add-value-hint{% if add_errors.value %} add-value-error{% endif %}"{% if add_errors.value %} aria-invalid="true"{% endif %}>
+      <p class="field__hint" id="add-value-hint">Feeds need a full https:// address. X handles go without the @. GitHub repositories are owner/name.</p>
+      {% if add_errors.value %}<p class="field__error" id="add-value-error">{{ add_errors.value }}</p>{% endif %}
+    </div>
+    <div class="form__actions">
+      <button class="button" type="submit">Add source</button>
+    </div>
+  </form>
+</details>
+{% for kind, label, note, rows in groups %}
+<section class="kind" id="kind-{{ kind.value }}" aria-labelledby="kind-{{ kind.value }}-title">
+  <div class="section__head">
+    <h2 id="kind-{{ kind.value }}-title">{{ label }}</h2>
+    <span class="section__count">{{ rows|length }}</span>
+  </div>
+  <p class="section__note">{{ note }}</p>
+  <ul class="sources">
+    {% for row in rows %}
+    {% if editing == row.source.id %}
+    {% with form = edit_form, errors = edit_errors %}{% include "partials/source_edit.html" %}{% endwith %}
+    {% else %}
+    {% include "partials/source_row.html" %}
+    {% endif %}
+    {% endfor %}
+  </ul>
+</section>
+{% endfor %}
+{% endblock %}

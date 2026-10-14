@@ -164,3 +164,37 @@ class StorySource(BaseModel):
 
 
 Story.model_rebuild()  # resolve the forward reference to StorySource
+
+
+class UnscoredItem(BaseModel):
+    """An item with no verdict (review failed, or still queued); never hidden from the owner."""
+
+    item_id: int
+    source_name: str
+    source_kind: SourceKind
+    url: str
+    title: str
+    published_at: datetime | None = None
+    status: ItemStatus
+
+
+class SourceOverview(BaseModel):
+    """One row of the Sources page: the source plus its health and volume."""
+
+    source: SourceConfig
+    last_ok_at: datetime | None = None
+    last_error: str | None = None
+    items_7d: int = 0
+    stories_7d: int = 0
+    items_total: int = 0
+
+
+class UsageStats(BaseModel):
+    """The last few days of real activity, used for the Settings cost estimate."""
+
+    days: int
+    runs: int
+    items_reviewed: int
+    review_usd: float
+    write_usd: float
+    briefing_usd: float

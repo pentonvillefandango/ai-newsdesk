@@ -1,0 +1,28 @@
+{% set s = row.source %}
+<li class="source{% if not s.enabled %} source--muted{% endif %}" id="source-{{ s.id }}">
+  <div class="source__main">
+    <p class="source__name">{{ s.name }} <span class="tag{% if s.trust == 'primary' %} tag--primary{% endif %}">{{ trust_label(s.trust) }}</span>{% if not s.enabled %} <span class="tag tag--muted">Muted</span>{% endif %}</p>
+    <p class="source__detail">{{ source_detail(s) }}</p>
+  </div>
+  <dl class="source__stats">
+    <div><dt>Weight</dt><dd>{{ "%.2f"|format(s.weight) }}</dd></div>
+    <div><dt>Items this week</dt><dd>{{ row.items_7d }}</dd></div>
+    <div><dt>In stories</dt><dd>{{ row.stories_7d }}</dd></div>
+    <div><dt>All time</dt><dd>{{ row.items_total }}</dd></div>
+    <div><dt>Last success</dt><dd>{% if row.last_ok_at %}<time datetime="{{ row.last_ok_at.isoformat() }}">{{ ago(row.last_ok_at, now) }}</time>{% else %}never{% endif %}</dd></div>
+  </dl>
+  <div class="source__actions">
+    <a class="button button--quiet button--small" href="/sources/{{ s.id }}/edit" hx-get="/sources/{{ s.id }}/edit" hx-target="#source-{{ s.id }}" hx-swap="outerHTML">Edit</a>
+    <form method="post" action="/sources/{{ s.id }}/mute" hx-post="/sources/{{ s.id }}/mute" hx-target="#source-{{ s.id }}" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="button button--quiet button--small" type="submit">{{ "Unmute" if not s.enabled else "Mute" }}</button>
+    </form>
+    <form method="post" action="/sources/{{ s.id }}/delete" hx-post="/sources/{{ s.id }}/delete" hx-target="#source-{{ s.id }}" hx-swap="outerHTML" hx-confirm="Delete {{ s.name }}? It will not be collected again.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="button button--danger button--small" type="submit">Delete</button>
+    </form>
+  </div>
+  {% if row.last_error %}
+  <p class="source__error">Last error: {{ row.last_error|truncate(200, true) }}</p>
+  {% endif %}
+</li>

@@ -1,0 +1,72 @@
+{% set signal = signal_of(story.score) %}
+{% set lead_src = story.sources[0] if story.sources else none %}
+<article class="story{% if lead %} story--lead{% endif %}" id="story-{{ story.id }}" data-signal="{{ signal }}" aria-labelledby="story-{{ story.id }}-title">
+  <span class="gauge" aria-hidden="true"></span>
+  <div class="story__body">
+    <p class="story__meta">
+      <span class="badge">Signal {{ signal }}</span>
+      <span>{{ category_label(story.category) }}</span>
+      <time datetime="{{ story.last_updated_at.isoformat() }}">{{ ago(story.last_updated_at, now) }}</time>
+    </p>
+    <h3 class="story__headline" id="story-{{ story.id }}-title">
+      {% set lead_url = lead_src.url|safe_url if lead_src else '#' %}{% if lead_url != '#' %}<a href="{{ lead_url }}" rel="noopener noreferrer" target="_blank">{{ story.headline }}</a>{% else %}{{ story.headline }}{% endif %}
+    </h3>
+    {% if story.summary %}
+    <p class="story__summary">{{ story.summary }}</p>
+    {% else %}
+    <p class="story__summary story__summary--pending">The summary is written on the next run.</p>
+    {% endif %}
+    {% if show_why and story.why_it_matters %}
+    <p class="story__why"><strong>Why it matters.</strong> {{ story.why_it_matters }}</p>
+    {% endif %}
+    <div class="story__foot">
+      <ul class="chips" aria-label="Sources">
+        {% for src in unique_sources(story.sources)[:4] %}
+        {% set icon = icon_for(src.source_kind) %}
+        {% set chip_url = src.url|safe_url %}
+        <li>{% if chip_url != '#' %}<a class="chip" href="{{ chip_url }}" rel="noopener noreferrer" target="_blank">{% else %}<span class="chip">{% endif %}{% if icon %}<svg class="icon" aria-hidden="true"><use href="/static/icons.svg#{{ icon }}"></use></svg>{% endif %}<span>{{ src.source_name }}</span>{% if chip_url != '#' %}</a>{% else %}</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+      <form class="thumbs" method="post" action="/stories/{{ story.id }}/feedback" hx-post="/stories/{{ story.id }}/feedback" hx-target="#story-{{ story.id }}" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% if lead %}
+        <input type="hidden" name="lead" value="1">
+        {% endif %}
+        <button class="thumb" type="submit" name="value" value="{{ 0 if story.feedback == 1 else 1 }}" aria-pressed="{{ 'true' if story.feedback == 1 else 'false' }}" title="More like this">
+          <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-thumbs-up"></use></svg><span class="visually-hidden">More like this</span>
+        </button>
+        <button class="thumb" type="submit" name="value" value="{{ 0 if story.feedback == -1 else -1 }}" aria-pressed="{{ 'true' if story.feedback == -1 else 'false' }}" title="Less like this">
+          <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-thumbs-down"></use></svg><span class="visually-hidden">Less like this</span>
+        </button>
+      </form>
+    </div>
+    {% if story.sources|length > 1 %}
+    <details class="more">
+      <summary>All {{ story.sources|length }} sources</summary>
+      <ul>
+        {% for src in story.sources %}
+        {% set link_url = src.url|safe_url %}
+        <li>{% if link_url != '#' %}<a href="{{ link_url }}" rel="noopener noreferrer" target="_blank">{{ src.title }}</a>{% else %}<span>{{ src.title }}</span>{% endif %}<span class="src">{{ src.source_name }}{% if src.published_at %}, {{ ago(src.published_at, now) }}{% endif %}</span></li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+    {% if blocked %}
+    <p class="story__note" role="status">Added to the blocklist: new items mentioning “{{ blocked }}” are dropped from the next run.</p>
+    {% endif %}
+    <details class="more block"{% if block_error %} open{% endif %}>
+      <summary>Never show stories like this</summary>
+      <form class="block__form" method="post" action="/stories/{{ story.id }}/block" hx-post="/stories/{{ story.id }}/block" hx-target="#story-{{ story.id }}" hx-swap="outerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% if lead %}
+        <input type="hidden" name="lead" value="1">
+        {% endif %}
+        <label for="block-{{ story.id }}">Word or phrase to block</label>
+        <input id="block-{{ story.id }}" name="keyword" type="text" maxlength="60" required autocomplete="off" aria-describedby="block-{{ story.id }}-hint{% if block_error %} block-{{ story.id }}-error{% endif %}"{% if block_error %} aria-invalid="true"{% endif %}>
+        <p class="field__hint" id="block-{{ story.id }}-hint">New items whose title or snippet contains it are dropped before review.</p>
+        {% if block_error %}<p class="field__error" id="block-{{ story.id }}-error" role="alert">{{ block_error }}</p>{% endif %}
+        <button class="button button--quiet button--small" type="submit">Block</button>
+      </form>
+    </details>
+  </div>
+</article>

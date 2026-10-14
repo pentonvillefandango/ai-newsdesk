@@ -134,7 +134,7 @@ These come from the Contract additions of steps 0–4 and the master plan's Reco
 Chosen with the frontend-design guidance, then checked against its list of generated-looking defaults.
 
 - **Subject:** a private morning paper about AI, read once or twice a day, often on a phone before the house is up. The job: show what matters, with proof (sources) and a sense of how strong each story is.
-- **Palette (light / dark):** paper `#EDF1F4` / `#121A25` (cool pre-dawn mist, deliberately *not* warm cream), surface `#F7F9FB` / `#18222F`, ink `#172230` / `#E4E9EF` (blue-black, not tinted near-black), secondary ink `#46546A` / `#B3BECB`, muted `#5E6B7D` / `#8D9AAA` (both ≥ 4.5:1 on paper), rules `#CFD8E0` / `#2A3646`. **One accent: first-light amber** `#A65F00` / `#E2A63C`, used only for signal (the gauge, the badge, the active nav underline, focus rings, the spend bars). Validated with the dataviz palette script: light `#A65F00` passes every check on `#F7F9FB`; dark passes contrast (≥ 3:1) on `#18222F`.
+- **Palette (light / dark):** paper `#EDF1F4` / `#121A25` (cool pre-dawn mist, deliberately *not* warm cream), surface `#F7F9FB` / `#18222F`, ink `#172230` / `#E4E9EF` (blue-black, not tinted near-black), secondary ink `#46546A` / `#B3BECB`, muted `#5E6B7D` / `#8D9AAA` (both ≥ 4.5:1 on paper), rules `#CFD8E0` / `#2A3646`. **One accent: first-light amber** `#9F5B00` / `#E2A63C`, used only for signal (the gauge, the badge, the active nav underline, focus rings, the spend bars). Validated with the dataviz palette script: light `#9F5B00` (darkened from `#A65F00`, which was only 4.34:1 on paper) reaches 4.66:1 on paper `#EDF1F4` and 5.01:1 on surface `#F7F9FB`, so it meets WCAG AA for small text; dark passes contrast (≥ 3:1) on `#18222F`.
 - **Type:** headlines in the system's best book serif (`"Iowan Old Style", "Charter", "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif`), body and UI in `system-ui`. No web fonts, no CDN, no layout shift from font swaps. Scale ratio about 1.2 from a 16 px base (17 px from 768 px), headlines balanced with `text-wrap: balance`, section names in serif italic in sentence case. No all-caps labels, no monospace, no middle-dot meta strings, no arrows on links.
 - **Layout:** one reading column (`40rem`, about 65 characters), left-aligned under the masthead; on wide screens the "By section" view gains a sticky section index on the left. Stories are not boxed cards: they sit on the paper, separated by space and a hairline, so the page reads like a column of print rather than a SaaS card kit.
 - **The one bold thing — the signal gauge:** every story carries a 4 px vertical gauge down its left edge, filled from the bottom in amber to its signal score (0–10), like a tide gauge at dawn. The wordmark repeats it in miniature. Everything else stays quiet: ink buttons, hairlines, no shadows, no entrance animations; motion only answers the owner's own clicks and is removed under `prefers-reduced-motion`.
@@ -2675,7 +2675,7 @@ def partial(
   --rule: #cfd8e0;
   --rule-strong: #aab6c2;
   --track: #dce3e9;
-  --accent: #a65f00;
+  --accent: #9f5b00;
   --accent-wash: #f5e6cd;
   --on-ink: #f7f9fb;
   --danger: #a3322a;

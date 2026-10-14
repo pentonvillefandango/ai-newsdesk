@@ -24,6 +24,9 @@ dependencies = [
     "uvicorn[standard]>=0.54.0",
 ]
 
+[project.scripts]
+ai-newsdesk = "ai_newsdesk.cli:run"
+
 [project.optional-dependencies]
 jev = ["typesafe-sdk>=0.7.4"]
 

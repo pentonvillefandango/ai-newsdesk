@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Briefing on Newsdesk{% endblock %}
+{% block content %}
+<div class="briefing">
+  <article aria-labelledby="briefing-title">
+    <header class="page-head">
+      {% if briefing %}
+      <h1 id="briefing-title"><time datetime="{{ briefing.date.isoformat() }}">{{ day_label(briefing.date) }}</time></h1>
+      <p class="lede">The morning briefing, written at {{ briefing.created_at.astimezone(zone).strftime("%H:%M") }} by {{ briefing.model }} from {{ briefing.story_ids|length }} {{ "story" if briefing.story_ids|length == 1 else "stories" }}.</p>
+      {% elif missing %}
+      <h1 id="briefing-title">No briefing for that day</h1>
+      <p class="lede">Pick a day from the list, or read <a href="/briefing">the latest briefing</a>.</p>
+      {% else %}
+      <h1 id="briefing-title">No briefing yet</h1>
+      <p class="lede">The first one is written at {{ runtime.briefing_time }} from the day's top stories. You can change the time in <a href="/settings#schedule">Settings</a>.</p>
+      {% endif %}
+    </header>
+    {% if blocks %}
+    <div class="read">
+      {% for block in blocks %}
+      {% if block.kind == "heading" %}
+      <h2>{{ block.segments[0].text }}</h2>
+      {% else %}
+      <p>{% for seg in block.segments %}{% if seg.url %}<a class="ref" href="{{ seg.url|safe_url }}" rel="noopener noreferrer" target="_blank">{{ seg.text }}</a>{% else %}{{ seg.text }}{% endif %}{% endfor %}</p>
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+  </article>
+  {% if archive %}
+  <nav class="archive" aria-labelledby="archive-title">
+    <h2 id="archive-title">All briefings</h2>
+    <ul>
+      {% for day in archive %}
+      <li><a href="/briefing/{{ day.isoformat() }}"{% if briefing and briefing.date == day %} aria-current="page"{% endif %}>{{ short_date(day) }}{% if day.year != now.year %} {{ day.year }}{% endif %}</a></li>
+      {% endfor %}
+    </ul>
+  </nav>
+  {% endif %}
+</div>
+{% endblock %}
