@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <id>https://arxiv.org/api/example</id>
+  <title>arXiv Query: search_query=cat:cs.CL OR cat:cs.AI OR cat:cs.LG</title>
+  <updated>2026-10-14T00:00:00Z</updated>
+  <opensearch:totalResults>2</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <opensearch:itemsPerPage>2</opensearch:itemsPerPage>
+  <entry>
+    <id>http://arxiv.org/abs/2610.01234v1</id>
+    <title>Sparse Mixture of
+  Experts at Scale</title>
+    <updated>2026-10-13T17:59:59Z</updated>
+    <published>2026-10-13T17:59:59Z</published>
+    <summary>  We study sparse mixture-of-experts language models
+  at scale and report new results.</summary>
+    <author><name>Ada Lovelace</name></author>
+    <author><name>Alan Turing</name></author>
+    <author><name>Grace Hopper</name></author>
+    <author><name>Edsger Dijkstra</name></author>
+    <link href="http://arxiv.org/abs/2610.01234v1" rel="alternate" type="text/html"/>
+    <link title="pdf" href="http://arxiv.org/pdf/2610.01234v1" rel="related" type="application/pdf"/>
+    <arxiv:primary_category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2610.00001v1</id>
+    <title>An Older Paper</title>
+    <updated>2026-10-10T12:00:00Z</updated>
+    <published>2026-10-10T12:00:00Z</published>
+    <summary>Too old for this run.</summary>
+    <author><name>Solo Author</name></author>
+    <link href="http://arxiv.org/abs/2610.00001v1" rel="alternate" type="text/html"/>
+    <arxiv:primary_category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+  </entry>
+</feed>

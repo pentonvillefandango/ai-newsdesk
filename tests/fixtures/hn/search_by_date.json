@@ -1,0 +1,43 @@
+{
+  "hits": [
+    {
+      "objectID": "41000001",
+      "title": "Claude Haiku 5.5 released",
+      "url": "https://www.anthropic.com/news/claude-haiku-5-5",
+      "author": "hnreader",
+      "points": 512,
+      "num_comments": 230,
+      "created_at": "2026-10-14T05:00:00Z",
+      "created_at_i": 1791954000,
+      "story_text": null,
+      "_tags": ["story", "author_hnreader", "story_41000001"]
+    },
+    {
+      "objectID": "41000002",
+      "title": "Ask HN: How do you evaluate LLM agents?",
+      "url": null,
+      "author": "builder",
+      "points": 150,
+      "num_comments": 88,
+      "created_at": "2026-10-13T22:30:00Z",
+      "created_at_i": 1791930600,
+      "story_text": "<p>We are building &amp; testing agents.</p>",
+      "_tags": ["story", "author_builder", "story_41000002", "ask_hn"]
+    },
+    {
+      "objectID": "41000003",
+      "title": "",
+      "url": "https://example.com/untitled",
+      "author": "someone",
+      "points": 120,
+      "created_at_i": 1791930600,
+      "_tags": ["story"]
+    }
+  ],
+  "nbHits": 3,
+  "page": 0,
+  "nbPages": 1,
+  "hitsPerPage": 30,
+  "query": "AI",
+  "params": "query=AI&tags=story"
+}

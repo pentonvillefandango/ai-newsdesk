@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Example Lab News</title>
+    <link>https://lab.example/news</link>
+    <description>News from an example AI lab</description>
+    <item>
+      <title>Introducing Model &amp; Tools 2</title>
+      <link>https://lab.example/news/model-2</link>
+      <dc:creator>Jane Doe</dc:creator>
+      <pubDate>Wed, 14 Oct 2026 05:30:00 +0000</pubDate>
+      <description><![CDATA[<p>Claude gets <b>faster</b> &amp; cheaper.</p>]]></description>
+    </item>
+    <item>
+      <title>Research update: sparse attention</title>
+      <link>https://lab.example/news/sparse-attention</link>
+      <pubDate>Tue, 13 Oct 2026 07:00:00 GMT</pubDate>
+      <description>A short research note.</description>
+    </item>
+    <item>
+      <title>Old post from Monday</title>
+      <link>https://lab.example/news/old</link>
+      <pubDate>Mon, 12 Oct 2026 09:00:00 GMT</pubDate>
+      <description>Too old for this run.</description>
+    </item>
+    <item>
+      <title>Undated post</title>
+      <link>https://lab.example/news/undated</link>
+      <description>No date on this one.</description>
+    </item>
+    <item>
+      <title>Post without a link</title>
+      <pubDate>Wed, 14 Oct 2026 04:00:00 GMT</pubDate>
+      <description>Skipped: nothing to link to.</description>
+    </item>
+  </channel>
+</rss>

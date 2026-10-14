@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Blog</title>
+  <link href="https://blog.example/" rel="alternate"/>
+  <id>https://blog.example/</id>
+  <updated>2026-10-14T04:00:00Z</updated>
+  <entry>
+    <title>Notes on a new open-weights model</title>
+    <link href="https://blog.example/2026/oct/14/open-weights/" rel="alternate"/>
+    <id>https://blog.example/2026/oct/14/open-weights/</id>
+    <updated>2026-10-14T04:00:00Z</updated>
+    <author><name>Sam Writer</name></author>
+    <content type="html">&lt;p&gt;I tried the new model on my laptop.&lt;/p&gt;&lt;p&gt;It runs at 40 tokens/second.&lt;/p&gt;</content>
+  </entry>
+</feed>

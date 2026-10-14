@@ -1,0 +1,119 @@
+# Seed sources, loaded into the database on first run (Store.seed_sources_if_empty), then edited in the UI.
+# Each entry is a SourceConfig without `id`: kind, name (unique), trust, config, optional enabled/weight.
+# Trust: primary = a lab's own channel; trusted = a respected person or newsletter;
+#        discovery = media, aggregators, arXiv, HN and searches.
+# Feed URLs were checked working on 2026-10-14. X is read through research-engine search, snippets only.
+sources:
+  # --- Labs' own feeds (primary) ---
+  - {kind: feed, name: OpenAI, trust: primary, config: {url: "https://openai.com/news/rss.xml", max: 10}}
+  - {kind: feed, name: Google DeepMind, trust: primary, config: {url: "https://deepmind.google/blog/rss.xml", max: 10}}
+  - {kind: feed, name: Google AI blog, trust: primary, config: {url: "https://blog.google/technology/ai/rss/", max: 10}}
+  - {kind: feed, name: Hugging Face, trust: primary, config: {url: "https://huggingface.co/blog/feed.xml", max: 10}}
+  - {kind: feed, name: Mistral AI, trust: primary, config: {url: "https://mistral.ai/rss.xml", max: 10}}
+  - {kind: feed, name: Meta AI, trust: primary, config: {url: "https://ai.meta.com/blog/rss/", max: 10}}
+  - {kind: feed, name: NVIDIA AI blog, trust: primary, config: {url: "https://blogs.nvidia.com/blog/category/deep-learning/feed/", max: 10}}
+  - {kind: feed, name: Microsoft Research, trust: primary, config: {url: "https://www.microsoft.com/en-us/research/feed/", max: 10}}
+  - {kind: feed, name: AWS ML blog, trust: primary, config: {url: "https://aws.amazon.com/blogs/machine-learning/feed/", max: 10}}
+  - {kind: feed, name: BAIR, trust: primary, config: {url: "https://bair.berkeley.edu/blog/feed.xml", max: 5}}
+  # Anthropic has no RSS feed: its news pages come in through a site-scoped search (below).
+  - {kind: search, name: Anthropic news, trust: primary, config: {site: "anthropic.com/news", max: 10}}
+  - {kind: search, name: OpenAI index, trust: primary, config: {site: "openai.com/index", max: 10}}
+
+  # --- Respected people and newsletters (trusted) ---
+  - {kind: feed, name: Simon Willison, trust: trusted, config: {url: "https://simonwillison.net/atom/everything/", max: 15}}
+  - {kind: feed, name: Interconnects, trust: trusted, config: {url: "https://www.interconnects.ai/feed", max: 8}}
+  - {kind: feed, name: Import AI, trust: trusted, config: {url: "https://importai.substack.com/feed", max: 6}}
+  - {kind: feed, name: Latent Space, trust: trusted, config: {url: "https://www.latent.space/feed", max: 10}}
+  - {kind: feed, name: Lilian Weng, trust: trusted, config: {url: "https://lilianweng.github.io/index.xml", max: 5}}
+  - {kind: feed, name: Sebastian Raschka, trust: trusted, config: {url: "https://magazine.sebastianraschka.com/feed", max: 8}}
+  - {kind: feed, name: AI Snake Oil, trust: trusted, config: {url: "https://www.aisnakeoil.com/feed", max: 6}}
+  - {kind: feed, name: The Gradient, trust: trusted, config: {url: "https://thegradient.pub/rss/", max: 5}}
+  - {kind: feed, name: One Useful Thing, trust: trusted, config: {url: "https://www.oneusefulthing.org/feed", max: 6}}
+  - {kind: feed, name: Gary Marcus, trust: trusted, config: {url: "https://garymarcus.substack.com/feed", max: 8}}
+  - {kind: feed, name: Chip Huyen, trust: trusted, config: {url: "https://huyenchip.com/feed.xml", max: 4}}
+  - {kind: feed, name: Eugene Yan, trust: trusted, config: {url: "https://eugeneyan.com/rss/", max: 4}}
+  - {kind: feed, name: SemiAnalysis, trust: trusted, config: {url: "https://newsletter.semianalysis.com/feed", max: 6}}
+
+  # --- X accounts: labs (primary) ---
+  - {kind: x_person, name: "X: @AnthropicAI", trust: primary, config: {handle: AnthropicAI}}
+  - {kind: x_person, name: "X: @OpenAI", trust: primary, config: {handle: OpenAI}}
+  - {kind: x_person, name: "X: @GoogleDeepMind", trust: primary, config: {handle: GoogleDeepMind}}
+  - {kind: x_person, name: "X: @MistralAI", trust: primary, config: {handle: MistralAI}}
+  - {kind: x_person, name: "X: @huggingface", trust: primary, config: {handle: huggingface}}
+  - {kind: x_person, name: "X: @MetaAI", trust: primary, config: {handle: MetaAI}}
+  - {kind: x_person, name: "X: @nvidia", trust: primary, config: {handle: nvidia}}
+
+  # --- X accounts: people and research groups (trusted) ---
+  - {kind: x_person, name: "X: @karpathy", trust: trusted, config: {handle: karpathy}}
+  - {kind: x_person, name: "X: @simonw", trust: trusted, config: {handle: simonw}}
+  - {kind: x_person, name: "X: @sama", trust: trusted, config: {handle: sama}}
+  - {kind: x_person, name: "X: @ylecun", trust: trusted, config: {handle: ylecun}}
+  - {kind: x_person, name: "X: @demishassabis", trust: trusted, config: {handle: demishassabis}}
+  - {kind: x_person, name: "X: @JeffDean", trust: trusted, config: {handle: JeffDean}}
+  - {kind: x_person, name: "X: @swyx", trust: trusted, config: {handle: swyx}}
+  - {kind: x_person, name: "X: @emollick", trust: trusted, config: {handle: emollick}}
+  - {kind: x_person, name: "X: @AndrewYNg", trust: trusted, config: {handle: AndrewYNg}}
+  - {kind: x_person, name: "X: @DrJimFan", trust: trusted, config: {handle: DrJimFan}}
+  - {kind: x_person, name: "X: @hardmaru", trust: trusted, config: {handle: hardmaru}}
+  - {kind: x_person, name: "X: @_akhaliq", trust: trusted, config: {handle: _akhaliq}}
+  - {kind: x_person, name: "X: @natolambert", trust: trusted, config: {handle: natolambert}}
+  - {kind: x_person, name: "X: @jackclarkSF", trust: trusted, config: {handle: jackclarkSF}}
+  - {kind: x_person, name: "X: @ESYudkowsky", trust: trusted, config: {handle: ESYudkowsky}}
+  - {kind: x_person, name: "X: @GaryMarcus", trust: trusted, config: {handle: GaryMarcus}}
+  - {kind: x_person, name: "X: @fchollet", trust: trusted, config: {handle: fchollet}}
+  - {kind: x_person, name: "X: @rasbt", trust: trusted, config: {handle: rasbt}}
+  - {kind: x_person, name: "X: @lilianweng", trust: trusted, config: {handle: lilianweng}}
+  - {kind: x_person, name: "X: @OfficialLoganK", trust: trusted, config: {handle: OfficialLoganK}}
+  - {kind: x_person, name: "X: @ClementDelangue", trust: trusted, config: {handle: ClementDelangue}}
+  - {kind: x_person, name: "X: @SebastienBubeck", trust: trusted, config: {handle: SebastienBubeck}}
+  - {kind: x_person, name: "X: @polynoamial", trust: trusted, config: {handle: polynoamial}}
+  - {kind: x_person, name: "X: @gdb", trust: trusted, config: {handle: gdb}}
+  - {kind: x_person, name: "X: @mustafasuleyman", trust: trusted, config: {handle: mustafasuleyman}}
+  - {kind: x_person, name: "X: @AravSrinivas", trust: trusted, config: {handle: AravSrinivas}}
+  - {kind: x_person, name: "X: @EpochAIResearch", trust: trusted, config: {handle: EpochAIResearch}}
+  - {kind: x_person, name: "X: @tszzl", trust: trusted, config: {handle: tszzl}}
+
+  # --- Media (discovery) ---
+  - {kind: feed, name: The Decoder, trust: discovery, config: {url: "https://the-decoder.com/feed/", max: 15}}
+  - {kind: feed, name: TechCrunch AI, trust: discovery, config: {url: "https://techcrunch.com/category/artificial-intelligence/feed/", max: 15}}
+  - {kind: feed, name: VentureBeat AI, trust: discovery, config: {url: "https://venturebeat.com/category/ai/feed/", max: 15}}
+  - {kind: feed, name: MIT Tech Review AI, trust: discovery, config: {url: "https://www.technologyreview.com/topic/artificial-intelligence/feed", max: 10}}
+  - {kind: feed, name: The Verge AI, trust: discovery, config: {url: "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml", max: 12}}
+  - {kind: feed, name: Ars Technica AI, trust: discovery, config: {url: "https://arstechnica.com/ai/feed/", max: 10}}
+
+  # --- Topic searches (discovery); SEO bait such as "best AI tools" or "AI news today" is left out ---
+  - {kind: search, name: "Search: new AI model release", trust: discovery, config: {query: "new AI model release", max: 6}}
+  - {kind: search, name: "Search: open weights model release", trust: discovery, config: {query: "open weights model release", max: 6}}
+  - {kind: search, name: "Search: AI research paper breakthrough", trust: discovery, config: {query: "AI research paper breakthrough", max: 6}}
+  - {kind: search, name: "Search: AI lab announcement", trust: discovery, config: {query: "AI lab announcement", max: 6}}
+  - {kind: search, name: "Search: AI startup funding round", trust: discovery, config: {query: "AI startup funding round", max: 6}}
+  - {kind: search, name: "Search: AI acquisition", trust: discovery, config: {query: "AI acquisition", max: 6}}
+  - {kind: search, name: "Search: AI regulation news", trust: discovery, config: {query: "AI regulation news", max: 6}}
+  - {kind: search, name: "Search: AI safety news", trust: discovery, config: {query: "AI safety news", max: 6}}
+  - {kind: search, name: "Search: AI chip announcement", trust: discovery, config: {query: "AI chip announcement", max: 6}}
+  - {kind: search, name: "Search: LLM benchmark results", trust: discovery, config: {query: "LLM benchmark results", max: 6}}
+  - {kind: search, name: "Search: AI agent launch", trust: discovery, config: {query: "AI agent launch", max: 6}}
+  - {kind: search, name: "Search: AI lawsuit copyright", trust: discovery, config: {query: "AI lawsuit copyright", max: 6}}
+
+  # --- Research and aggregators (discovery) ---
+  # The step 3 pre-filter drops an arXiv paper unless its title or author list contains one of `keywords`
+  # (whole word or phrase, case-insensitive); an arXiv source without keywords drops everything.
+  - kind: arxiv
+    name: arXiv cs.CL/cs.AI/cs.LG
+    trust: discovery
+    config:
+      categories: [cs.CL, cs.AI, cs.LG]
+      max: 50
+      keywords: [OpenAI, Anthropic, DeepMind, Google, Meta, FAIR, Mistral, Hugging Face, NVIDIA, Microsoft,
+                 Claude, Gemini, GPT, Llama, Qwen, DeepSeek, Andrej Karpathy, Yann LeCun, Yoshua Bengio,
+                 Geoffrey Hinton, Ilya Sutskever, Jeff Dean, Percy Liang, Christopher Manning, Chelsea Finn,
+                 Sergey Levine, Noam Brown, Jason Wei, Sebastian Raschka, Lilian Weng]
+  # min_points is not set here: the pipeline injects RuntimeSettings.hn_min_points (default 100).
+  - {kind: hn, name: Hacker News, trust: discovery, config: {queries: [AI, LLM, GPT, Claude, OpenAI, Gemini, agents]}}
+
+  # --- Key open-model and tooling releases (discovery: patch releases are noisy, the pre-filter decides) ---
+  - {kind: github, name: "GitHub: huggingface/transformers", trust: discovery, config: {repo: huggingface/transformers, max: 3}}
+  - {kind: github, name: "GitHub: vllm-project/vllm", trust: discovery, config: {repo: vllm-project/vllm, max: 3}}
+  - {kind: github, name: "GitHub: ollama/ollama", trust: discovery, config: {repo: ollama/ollama, max: 3}}
+  - {kind: github, name: "GitHub: ggml-org/llama.cpp", trust: discovery, config: {repo: ggml-org/llama.cpp, max: 3}}
+  - {kind: github, name: "GitHub: pytorch/pytorch", trust: discovery, config: {repo: pytorch/pytorch, max: 3}}
