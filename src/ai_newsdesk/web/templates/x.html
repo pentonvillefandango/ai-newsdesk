@@ -1,43 +1,34 @@
 {% extends "base.html" %}
-{% block title %}X on Newsdesk{% endblock %}
+{% block title %}{% if showing_dismissed %}Dismissed X posts{% else %}X{% endif %} on Newsdesk{% endblock %}
 {% block content %}
+{% if showing_dismissed %}
+<header class="page-head">
+  <h1>Dismissed</h1>
+  <p class="lede">{% if posts %}{{ posts|length }} {{ "post" if posts|length == 1 else "posts" }} from X you dismissed in the last 7 days. Restore one to put it back.{% else %}Nothing from X dismissed in the last 7 days.{% endif %}</p>
+  <p class="page-head__back"><a href="/x">Back to X</a></p>
+</header>
+{% else %}
 <header class="page-head">
   <h1>From X</h1>
   <p class="lede">{% if posts %}{{ posts|length }} {{ "post" if posts|length == 1 else "posts" }} from the people you follow on X in the last 7 days, newest first.{% else %}Posts from the people you follow on X, kept apart from the news.{% endif %}</p>
 </header>
-{% if not posts %}
+{% endif %}
+{% if not posts and not showing_dismissed %}
 <section class="empty">
   <h2>Nothing yet</h2>
   <p>No posts from your X accounts in the last 7 days yet — they're collected with each run.</p>
 </section>
-{% else %}
+{% elif posts %}
 <section aria-labelledby="posts-title">
-  <h2 id="posts-title" class="visually-hidden">Posts</h2>
+  <h2 id="posts-title" class="visually-hidden">{% if showing_dismissed %}Dismissed posts{% else %}Posts{% endif %}</h2>
   <div class="cards cards--posts">
     {% for post in posts %}
-    {% set post_url = post.url|safe_url %}
-    {% set when = post.published_at or post.fetched_at %}
-    <article class="post" id="post-{{ post.item_id }}" aria-labelledby="post-{{ post.item_id }}-who">
-      <header class="post__head">
-        <svg class="icon post__logo" aria-hidden="true"><use href="/static/icons.svg#i-x-logo"></use></svg>
-        <p class="post__who" id="post-{{ post.item_id }}-who">
-          <span class="post__handle">@{{ post.handle }}</span>
-          {% if post.source_name not in (post.handle, "@" ~ post.handle) %}<span class="post__name">{{ post.source_name }}</span>{% endif %}
-        </p>
-        {% if post.signal is not none and post.status == "reviewed" %}<span class="badge">Signal {{ post.signal }}</span>{% else %}<span class="badge badge--unscored">Unscored</span>{% endif %}
-      </header>
-      <div class="post__text">
-        {% for line in (post.text or post.title).splitlines() if line.strip() %}
-        <p>{{ line }}</p>
-        {% endfor %}
-      </div>
-      <footer class="post__foot">
-        <time datetime="{{ when.isoformat() }}">{% if not post.published_at %}seen {% endif %}{{ ago(when, now) }}</time>
-        {% if post_url != '#' %}<a class="post__open" href="{{ post_url }}" rel="noopener noreferrer" target="_blank">Open on X<svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-external-link"></use></svg></a>{% else %}<span class="post__url">{{ post.url }}</span>{% endif %}
-      </footer>
-    </article>
+    {% include "partials/x_post.html" %}
     {% endfor %}
   </div>
 </section>
+{% endif %}
+{% if dismissed_count %}
+<p class="show-dismissed"><a href="/x?dismissed=1">Show dismissed ({{ dismissed_count }})</a></p>
 {% endif %}
 {% endblock %}

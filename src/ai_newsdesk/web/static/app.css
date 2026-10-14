@@ -1050,6 +1050,149 @@ code {
   }
 }
 
+/* ---------- Dismiss: an "×" in each card's top-right corner ----------
+   The form sits out of flow (no layout shift). The button is a 44px hit area centred on the
+   meta/head line, with a smaller visible circle; the meta/head line keeps clear of it. */
+.story,
+.post {
+  position: relative;
+}
+
+.dismiss {
+  position: absolute;
+  top: calc(var(--space-5) - 0.6875rem);
+  right: -0.8125rem;
+  margin: 0;
+}
+
+.dismiss__button {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0.375rem;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  background-clip: content-box;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.dismiss__button .icon {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.dismiss__button:hover {
+  background-color: var(--track);
+  color: var(--ink);
+}
+
+.dismiss__button:focus-visible {
+  outline-offset: -0.25rem;
+  border-radius: var(--radius-pill);
+  color: var(--ink);
+}
+
+.story .story__meta,
+.post .post__head {
+  padding-right: 2rem;
+}
+
+/* Logo, handle, badge and "×" share the first line, even when a display name wraps below. */
+.post .post__head {
+  align-items: flex-start;
+}
+
+.post__head .post__logo {
+  margin-top: 0.2rem;
+}
+
+/* Dismissed view: a "Restore" button under the card's content (a corner would squeeze the
+   handle or meta line). */
+.dismiss--restore {
+  position: static;
+  justify-self: start;
+  margin-top: var(--space-4);
+}
+
+.story > .dismiss--restore {
+  grid-column: 2;
+}
+
+.story--dismissed .story__meta,
+.post--dismissed .post__head {
+  padding-right: 0;
+}
+
+@media (pointer: coarse) {
+  .dismiss--restore .button {
+    min-height: 2.75rem;
+  }
+}
+
+/* The "Dismissed · Undo" stand-in that replaces a card for a few seconds. */
+.dismissed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-2);
+  padding-block: var(--space-3);
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-3);
+  font-size: var(--step--1);
+}
+
+.dismissed:last-child {
+  border-bottom: 0;
+}
+
+.dismissed__undo {
+  margin: 0;
+}
+
+.dismissed__undo .link-button {
+  min-height: 2.75rem;
+  padding-inline: var(--space-2);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.page-head__back,
+.show-dismissed {
+  font-size: var(--step--1);
+  color: var(--ink-3);
+}
+
+.show-dismissed {
+  margin-top: var(--space-6);
+}
+
+@media (min-width: 64rem) {
+  .cards > .story > .dismiss,
+  .cards > .post > .dismiss {
+    right: calc(var(--space-5) - 0.8125rem);
+  }
+  .story--lead > .dismiss {
+    top: calc(var(--space-6) - 0.6875rem);
+    right: calc(var(--space-6) - 0.8125rem);
+  }
+  .cards > .dismissed {
+    justify-content: center;
+    padding: var(--space-5);
+    border: 1px dashed var(--rule-strong);
+    border-radius: var(--radius-m);
+  }
+  .cards > .dismissed:last-child {
+    border-bottom: 1px dashed var(--rule-strong);
+  }
+  .dismissed + .cards {
+    margin-top: var(--space-5);
+  }
+}
+
 /* ---------- Buttons ---------- */
 .button {
   appearance: none;
@@ -1605,6 +1748,7 @@ select:focus-visible {
 /* ---------- Motion ---------- */
 @media (prefers-reduced-motion: no-preference) {
   .thumb,
+  .dismiss__button,
   .button,
   .chip,
   .nav a,

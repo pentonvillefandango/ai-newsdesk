@@ -1,0 +1,16 @@
+{# The "Dismissed · Undo" stand-in for a dismissed card (htmx only). It removes itself after
+   8 s through a delayed hx-get whose answer is empty plus hx-swap="delete": no inline script. #}
+<div class="dismissed" id="{{ dom_id }}" hx-get="/dismissed/expire" hx-trigger="load delay:8s" hx-swap="delete">
+  <p class="dismissed__text" role="status">Dismissed</p>
+  <span class="dismissed__dot" aria-hidden="true">·</span>
+  <form class="dismissed__undo" method="post" action="{{ undo_url }}" hx-post="{{ undo_url }}" hx-target="#{{ dom_id }}" hx-swap="outerHTML">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if lead %}
+    <input type="hidden" name="lead" value="1">
+    {% endif %}
+    {% if view == "category" %}
+    <input type="hidden" name="view" value="category">
+    {% endif %}
+    <button class="link-button" type="submit" aria-label="Undo dismiss: {{ label }}" autofocus>Undo</button>
+  </form>
+</div>

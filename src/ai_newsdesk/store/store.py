@@ -194,6 +194,30 @@ def _lead_features(row: aiosqlite.Row) -> dict[str, Any]:
     }
 
 
+# Today's window: stories updated since a cutoff with score >= threshold, or with an item whose
+# review failed (never hidden, whatever the score). News only: a story whose items are all X
+# posts is not listed. Parameters: (cutoff, threshold). Callers add the dismissed filter.
+_TODAY_WHERE = (
+    "st.last_updated_at >= ?"
+    " AND EXISTS (SELECT 1 FROM items i JOIN sources s ON s.id = i.source_id"
+    "      WHERE i.story_id = st.id AND s.kind != 'x_person')"
+    " AND (st.score >= ? OR EXISTS (SELECT 1 FROM items i"
+    "      JOIN sources s ON s.id = i.source_id WHERE i.story_id = st.id"
+    "      AND i.status = 'review_failed' AND s.kind != 'x_person'))"
+)
+
+# The X page's window: posts from X account sources fetched since a cutoff, except dropped posts
+# and posts the judge marked junk. Parameter: (cutoff,). Callers add the dismissed filter.
+_X_POSTS_WHERE = (
+    "s.kind = 'x_person' AND i.status != 'dropped' AND i.fetched_at >= ?"
+    " AND COALESCE(json_extract(i.judge_json, '$.junk'), 0) = 0"
+)
+
+
+def _dismissed_sql(alias: str, dismissed: bool) -> str:
+    return f"{alias}.dismissed_at IS {'NOT NULL' if dismissed else 'NULL'}"
+
+
 class _SeedSource(BaseModel):
     kind: SourceKind
     name: str
@@ -736,7 +760,11 @@ class Store:
         """Fold `merge_ids` into `keep_id` in one transaction: move their items, carry the most
         recent non-zero feedback when `keep_id` has none, keep the earliest first-seen and latest
         update times, delete the merged stories, rescore and flag `keep_id` for rewriting.
-        Unknown ids (or an unknown `keep_id`) are skipped silently."""
+        Unknown ids (or an unknown `keep_id`) are skipped silently.
+
+        Dismissal (feedback-1): `keep_id` keeps its own `dismissed_at`, whatever the merged
+        stories' state. A dismissed story folded into a visible one shows again (as the kept
+        story); a dismissed `keep_id` stays hidden even when visible stories join it."""
         others = sorted({i for i in merge_ids if i != keep_id})
         if not others:
             return
@@ -827,20 +855,16 @@ class Store:
                 raise KeyError(f"no story {text.story_id}")
 
     async def today_stories(
-        self, now: dt.datetime, threshold: float, hours: int = 24
+        self, now: dt.datetime, threshold: float, hours: int = 24, *, dismissed: bool = False
     ) -> list[Story]:
         """Stories updated in the last `hours` with score >= threshold, or with an item whose
         review failed (never hidden, whatever the score), best first, with every source item
         (best signal first). News only: X posts are ignored, and a story with nothing else is
-        not listed."""
+        not listed. Dismissed stories are left out; `dismissed=True` lists only those."""
         cutoff = _ts(now - dt.timedelta(hours=hours))
         rows = await self._all(
-            "SELECT * FROM stories st WHERE st.last_updated_at >= ?"
-            " AND EXISTS (SELECT 1 FROM items i JOIN sources s ON s.id = i.source_id"
-            "      WHERE i.story_id = st.id AND s.kind != 'x_person')"
-            " AND (st.score >= ? OR EXISTS (SELECT 1 FROM items i"
-            "      JOIN sources s ON s.id = i.source_id WHERE i.story_id = st.id"
-            "      AND i.status = 'review_failed' AND s.kind != 'x_person'))"
+            f"SELECT * FROM stories st WHERE {_TODAY_WHERE}"  # noqa: S608
+            f" AND {_dismissed_sql('st', dismissed)}"
             " ORDER BY st.score DESC, st.last_updated_at DESC, st.id DESC",
             (cutoff, threshold),
         )
@@ -865,6 +889,7 @@ class Store:
                     last_updated_at=_req_dt(r["last_updated_at"]),
                     feedback=r["feedback"],
                     scored=any(i["signal"] is not None for i in items),
+                    dismissed=r["dismissed_at"] is not None,
                     sources=[
                         StorySource(
                             item_id=i["id"],
@@ -879,6 +904,36 @@ class Store:
                 )
             )
         return stories
+
+    async def count_dismissed_stories(
+        self, now: dt.datetime, threshold: float, hours: int = 24
+    ) -> int:
+        """How many dismissed stories `today_stories` would otherwise list."""
+        row = await self._one(
+            f"SELECT count(*) FROM stories st WHERE {_TODAY_WHERE}"  # noqa: S608
+            " AND st.dismissed_at IS NOT NULL",
+            (_ts(now - dt.timedelta(hours=hours)), threshold),
+        )
+        return int(row[0]) if row is not None else 0
+
+    async def dismiss_story(self, story_id: int, at: dt.datetime) -> bool:
+        """Hide a story from Today. Idempotent (keeps the first time). False if no such story.
+        Only hides: feedback, source weights and the taste model are untouched."""
+        when = _ts(at)
+        async with self._tx() as conn:
+            cur = await conn.execute(
+                "UPDATE stories SET dismissed_at = COALESCE(dismissed_at, ?) WHERE id = ?",
+                (when, story_id),
+            )
+            return cur.rowcount > 0
+
+    async def undismiss_story(self, story_id: int) -> bool:
+        """Show a dismissed story again. Idempotent. False if no such story."""
+        async with self._tx() as conn:
+            cur = await conn.execute(
+                "UPDATE stories SET dismissed_at = NULL WHERE id = ?", (story_id,)
+            )
+            return cur.rowcount > 0
 
     async def top_stories_for_briefing(
         self, now: dt.datetime, limit: int = 15
@@ -1143,13 +1198,14 @@ class Store:
     # --- web queries (step 5) -------------------------------------------------------------
 
     async def stories_by_ids(self, ids: list[int]) -> dict[int, Story]:
-        """Stories by ID with their sources, lead (highest signal, then lowest id) first."""
+        """Stories by ID with their sources, lead (highest signal, then lowest id) first.
+        Dismissed stories are included (and say so): the briefing and card refreshes read them."""
         if not ids:
             return {}
         marks = ",".join("?" * len(ids))
         rows = await self._all(
             "SELECT id, headline, category, score, summary, why_it_matters, first_seen_at,"  # noqa: S608
-            f" last_updated_at, feedback FROM stories WHERE id IN ({marks})",
+            f" last_updated_at, feedback, dismissed_at FROM stories WHERE id IN ({marks})",
             ids,
         )
         stories: dict[int, Story] = {
@@ -1164,6 +1220,7 @@ class Store:
                 last_updated_at=_req_dt(r["last_updated_at"]),
                 feedback=int(r["feedback"] or 0),
                 scored=False,  # set below from the items' signals
+                dismissed=r["dismissed_at"] is not None,
             )
             for r in rows
         }
@@ -1201,7 +1258,7 @@ class Store:
             " s.name AS source_name, s.kind AS source_kind"
             " FROM items i JOIN sources s ON s.id = i.source_id"
             " WHERE i.status IN ('review_failed', 'queued') AND i.story_id IS NULL"
-            " AND s.kind != 'x_person' AND i.fetched_at >= ?"
+            " AND s.kind != 'x_person' AND i.fetched_at >= ? AND i.dismissed_at IS NULL"
             " ORDER BY i.heuristic_score DESC, i.fetched_at DESC, i.id DESC LIMIT ?",
             (_ts(now - dt.timedelta(hours=hours)), limit),
         )
@@ -1218,17 +1275,19 @@ class Store:
             for r in rows
         ]
 
-    async def x_posts(self, now: dt.datetime, days: int = 7, limit: int = 200) -> list[XPost]:
+    async def x_posts(
+        self, now: dt.datetime, days: int = 7, limit: int = 200, *, dismissed: bool = False
+    ) -> list[XPost]:
         """Posts from X account sources fetched in the last `days`, newest first (published,
         else fetched). Reviewed and unreviewed posts are included; dropped posts and posts the
-        judge marked junk are not."""
+        judge marked junk are not. Dismissed posts are left out; `dismissed=True` lists only
+        those."""
         rows = await self._all(
-            "SELECT i.id, i.url, i.title, i.author, i.snippet, i.published_at, i.fetched_at,"
+            "SELECT i.id, i.url, i.title, i.author, i.snippet, i.published_at, i.fetched_at,"  # noqa: S608
             " i.signal, i.status, json_extract(i.judge_json, '$.junk') AS junk,"
-            " s.name AS source_name, s.config_json"
+            " i.dismissed_at, s.name AS source_name, s.config_json"
             " FROM items i JOIN sources s ON s.id = i.source_id"
-            " WHERE s.kind = 'x_person' AND i.status != 'dropped' AND i.fetched_at >= ?"
-            " AND COALESCE(json_extract(i.judge_json, '$.junk'), 0) = 0"
+            f" WHERE {_X_POSTS_WHERE} AND {_dismissed_sql('i', dismissed)}"
             " ORDER BY COALESCE(i.published_at, i.fetched_at) DESC, i.id DESC LIMIT ?",
             (_ts(now - dt.timedelta(days=days)), limit),
         )
@@ -1248,6 +1307,38 @@ class Store:
                     signal=round(r["signal"]) if r["signal"] is not None else None,
                     status=ItemStatus(r["status"]),
                     junk=bool(r["junk"]) if r["junk"] is not None else None,
+                    dismissed=r["dismissed_at"] is not None,
                 )
             )
         return posts
+
+    async def count_dismissed_x_posts(self, now: dt.datetime, days: int = 7) -> int:
+        """How many dismissed posts `x_posts` would otherwise list."""
+        row = await self._one(
+            "SELECT count(*) FROM items i JOIN sources s ON s.id = i.source_id"  # noqa: S608
+            f" WHERE {_X_POSTS_WHERE} AND i.dismissed_at IS NOT NULL",
+            (_ts(now - dt.timedelta(days=days)),),
+        )
+        return int(row[0]) if row is not None else 0
+
+    async def dismiss_item(self, item_id: int, at: dt.datetime) -> bool:
+        """Hide an X post from the X page. Idempotent (keeps the first time). False if there is
+        no such item or it is not an X post. Feedback and source weights are untouched."""
+        when = _ts(at)
+        async with self._tx() as conn:
+            cur = await conn.execute(
+                "UPDATE items SET dismissed_at = COALESCE(dismissed_at, ?) WHERE id = ?"
+                " AND source_id IN (SELECT id FROM sources WHERE kind = 'x_person')",
+                (when, item_id),
+            )
+            return cur.rowcount > 0
+
+    async def undismiss_item(self, item_id: int) -> bool:
+        """Show a dismissed X post again. Idempotent. False if no such X post."""
+        async with self._tx() as conn:
+            cur = await conn.execute(
+                "UPDATE items SET dismissed_at = NULL WHERE id = ?"
+                " AND source_id IN (SELECT id FROM sources WHERE kind = 'x_person')",
+                (item_id,),
+            )
+            return cur.rowcount > 0
