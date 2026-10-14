@@ -32,6 +32,8 @@ async def _render(
     store = store_of(request)
     allowed: set[str] = set()
     if briefing is not None and briefing.story_ids:
+        # stories_by_ids returns only stories that still exist: ids merged away since the
+        # briefing was written (feedback-1) are skipped, and their links render as plain text.
         for story in (await store.stories_by_ids(briefing.story_ids)).values():
             allowed.update(src.url for src in story.sources)
     return await page(
