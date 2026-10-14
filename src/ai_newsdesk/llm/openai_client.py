@@ -32,7 +32,8 @@ def make_sdk(
     api_key: str,
     *,
     http_client: httpx.AsyncClient | None = None,
-    max_retries: int = 2,
+    max_retries: int = 0,
+    timeout: float = 120.0,
 ) -> openai.AsyncOpenAI:
     """An SDK client for OpenAI direct (default base URL) or OpenRouter."""
     if provider not in PROVIDERS:
@@ -47,8 +48,11 @@ def make_sdk(
             default_headers=OPENROUTER_HEADERS,
             http_client=http,
             max_retries=max_retries,
+            timeout=timeout,
         )
-    return openai.AsyncOpenAI(api_key=api_key, http_client=http, max_retries=max_retries)
+    return openai.AsyncOpenAI(
+        api_key=api_key, http_client=http, max_retries=max_retries, timeout=timeout
+    )
 
 
 def _strict(node: Any) -> Any:

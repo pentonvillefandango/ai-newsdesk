@@ -20,7 +20,11 @@ from ai_newsdesk.llm.openai_client import OpenAICompatibleClient, make_sdk
 from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.llm.validate import missing_key_error, validate_model_choice
 
-DEFAULT_MAX_RETRIES = 2  # both SDKs' own default
+# No SDK retries: a failed call is recorded once at its worst case, so a retry would be an
+# unrecorded attempt; the pipeline offers failed items again on the next run instead.
+MAX_RETRIES = 0
+# The SDKs' default is 10 minutes; a run holds the pipeline lock, so bound every call.
+CALL_TIMEOUT_S = 120.0
 
 
 class UnusableModelError(ValueError):
@@ -36,11 +40,13 @@ class SdkPool:
         keys: Mapping[str, str],
         *,
         http_client: Any | None = None,
-        max_retries: int = DEFAULT_MAX_RETRIES,
+        max_retries: int = MAX_RETRIES,
+        timeout: float = CALL_TIMEOUT_S,
     ) -> None:
         self._keys = dict(keys)
         self._http = http_client  # tests only: a MockTransport client
-        self._max_retries = max_retries  # 0 for a one-off call that must stay short
+        self._max_retries = max_retries
+        self._timeout = timeout
         self._anthropic: anthropic.AsyncAnthropic | None = None
         self._openai: dict[str, openai.AsyncOpenAI] = {}
 
@@ -56,6 +62,7 @@ class SdkPool:
                 api_key=self._keys.get("anthropic") or "not-set",
                 http_client=self._http,
                 max_retries=self._max_retries,
+                timeout=self._timeout,
             )
         return self._anthropic
 
@@ -66,6 +73,7 @@ class SdkPool:
                 self._keys.get(provider, ""),
                 http_client=self._http,
                 max_retries=self._max_retries,
+                timeout=self._timeout,
             )
         return self._openai[provider]
 

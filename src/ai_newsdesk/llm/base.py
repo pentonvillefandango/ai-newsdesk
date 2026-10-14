@@ -36,7 +36,7 @@ def prompt_tokens(system: str, user: str) -> int:
 def describe_error(exc: BaseException) -> str:
     """A log-safe description of a failed model call (never the request, the body or the key)."""
     if isinstance(exc, anthropic.RateLimitError | openai.RateLimitError):
-        return "rate limited (429) after SDK retries"
+        return "rate limited (429)"
     if isinstance(exc, anthropic.APIStatusError | openai.APIStatusError):
         return f"HTTP {exc.status_code} ({type(exc).__name__})"
     if isinstance(exc, anthropic.APIConnectionError | openai.APIConnectionError):
@@ -58,9 +58,12 @@ def abandoned_usage(provider: str, model: str, purpose: Purpose, worst_case_usd:
 
 def may_be_billed(exc: BaseException) -> bool:
     """False only when the provider certainly charged nothing: it answered with a 4xx (bad key,
-    bad request, rate limit) other than 408. A timeout, a dropped connection, a 5xx or anything
-    unexpected may have been billed, so it counts."""
+    bad request, rate limit) other than 408, or a 529 (overloaded: the request was not run).
+    A timeout, a dropped connection, another 5xx or anything unexpected may have been billed,
+    so it counts."""
     if isinstance(exc, anthropic.APIStatusError | openai.APIStatusError):
+        if exc.status_code == 529:  # overloaded: rejected, never run
+            return False
         return exc.status_code >= 500 or exc.status_code == 408
     return True
 

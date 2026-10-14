@@ -171,7 +171,8 @@ def _status_error(status: int) -> Exception:
         (_status_error(401), False),
         (_status_error(400), False),
         (server_error(), True),
-        (_status_error(529), True),
+        (_status_error(529), False),  # overloaded: rejected, never run
+        (_status_error(503), True),
         (anthropic.APITimeoutError(request=REQUEST), True),
         (ValueError("parsing broke after the reply"), True),  # unsure: recorded
     ],
