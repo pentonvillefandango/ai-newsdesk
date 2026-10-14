@@ -509,24 +509,38 @@ code {
     0 0 0 4px var(--ink);
 }
 
+/* Phones: the wordmark, theme, accent and Log out share the first row; the seven nav items
+   fill the second (both fit a 390 px phone). */
 @media (max-width: 40rem) {
   .masthead__inner {
     justify-content: space-between;
+    column-gap: var(--space-3);
+  }
+  .wordmark {
+    font-size: var(--step-1);
   }
   .nav {
     order: 3;
     width: 100%;
     margin-left: 0;
     flex-wrap: wrap;
-    gap: 0 var(--space-3); /* six items fit a 390 px phone */
+    gap: 0 var(--space-2);
     justify-content: space-between;
+    font-size: 0.8125rem;
   }
   .theme {
     order: 1;
     margin-left: auto;
   }
+  .theme button {
+    padding-inline: 0.5rem;
+  }
   .accent {
     order: 1;
+  }
+  .accent__toggle {
+    width: 1.75rem;
+    height: 1.75rem;
   }
   .logout {
     order: 2;
@@ -1856,9 +1870,19 @@ select:focus-visible {
   text-transform: uppercase;
 }
 
+/* The step number, as a small disc (the list itself gives screen readers the order). */
 .flow__when::before {
-  content: counter(flow) ". ";
-  content: counter(flow) ". " / "";
+  content: counter(flow);
+  content: counter(flow) / "";
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  margin-right: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--ink);
+  color: var(--on-ink);
+  letter-spacing: 0;
 }
 
 .flow__title {

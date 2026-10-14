@@ -305,8 +305,9 @@ async def main(db_path: str) -> None:
             f"[Draft guidance on labelling AI images]({url(3)}) asks platforms for provenance metadata."
         )
         local_day = now.astimezone(ZoneInfo("Europe/London")).date()
+        # The last id is a story merged away since: the briefing page skips it (feedback-2).
         await store.save_briefing(
-            local_day, "claude-haiku-5-5", body, ids[:6], now - timedelta(hours=2)
+            local_day, "claude-haiku-5-5", body, [*ids[:6], 999999], now - timedelta(hours=2)
         )
         usage = Usage(
             provider="anthropic",
