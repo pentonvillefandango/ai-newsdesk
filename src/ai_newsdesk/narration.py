@@ -14,6 +14,7 @@ from ai_newsdesk.briefing import LINK_RE
 # One or more links, with the whitespace before them, that end a sentence or a paragraph.
 _CITATIONS = re.compile(rf"(?:\s*{LINK_RE.pattern})+(?=\s*(?:[.!?)]|$))", re.MULTILINE)
 _BLANK_LINE = re.compile(r"\n[ \t]*\n")
+_HEADING_LINE = re.compile(r"^[ \t]*(#+ [^\n]*)(?:\n|$)", re.MULTILINE)
 _URL = re.compile(r"https?://[^\s<>]+")
 _MARKUP = re.compile(r"[*_`]")
 _SPACES = re.compile(r"\s+")
@@ -41,7 +42,9 @@ def _speak_paragraph(paragraph: str) -> str:
 
 def speech_text(body: str, day_label: str) -> str:
     paragraphs = [f"AI Newsdesk briefing for {day_label}."]
-    for raw in _BLANK_LINE.split(body.replace("\r\n", "\n")):
+    # A heading line is its own paragraph even with no blank line around it.
+    body = _HEADING_LINE.sub(r"\n\n\1\n\n", body.replace("\r\n", "\n"))
+    for raw in _BLANK_LINE.split(body):
         spoken = _speak_paragraph(raw)
         if spoken:
             paragraphs.append(spoken)

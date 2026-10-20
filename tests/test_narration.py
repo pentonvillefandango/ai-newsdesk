@@ -13,6 +13,8 @@ HEAD = f"AI Newsdesk briefing for {LABEL}.\n\n"
     [
         ("Quiet day.", "Quiet day."),
         ("## Research\n\nA result.", "Research.\n\nA result."),
+        ("## Research\nA result.", "Research.\n\nA result."),
+        ("Intro.\n## Research\nA result.", "Intro.\n\nResearch.\n\nA result."),
         ("## Really?\n\nYes.", "Really?\n\nYes."),
         ("## Done.\n\nYes.", "Done.\n\nYes."),
         ("Sued in court [CTV News](https://x.example/a).", "Sued in court."),
