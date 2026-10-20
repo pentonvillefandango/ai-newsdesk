@@ -4,7 +4,10 @@
   var select = document.getElementById("narration_voice_id");
   var audio = document.getElementById("voice-sample-audio");
   if (!button || !select || !audio) return;
-  button.disabled = false;
+  // "Random (any voice)" has no sample of its own.
+  function update() { button.disabled = select.value === "random"; }
+  update();
+  select.addEventListener("change", update);
   button.addEventListener("click", function () {
     audio.src = "/settings/voice-sample/" + encodeURIComponent(select.value);
     var started = audio.play();

@@ -128,6 +128,10 @@ def parse_source_form(
 
 
 VOICE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
+NARRATION_WHEN = (
+    ("scheduled", "Ready at briefing time"),
+    ("on_demand", "Only when I press Make audio"),
+)
 NARRATION_MODELS = (
     ("eleven_v4", "Eleven v4 (best)"),
     ("eleven_multilingual_v2", "Multilingual v2 (most stable long-form)"),
@@ -201,6 +205,11 @@ def parse_settings_form(form: Mapping[str, str]) -> SettingsForm:
     # The page always posts all four; a form without them (an older client) leaves them as saved.
     if any(key.startswith("narration_") for key in form):
         values["narration_enabled"] = form.get("narration_enabled") == "on"
+        when = form.get("narration_when")
+        if when in dict(NARRATION_WHEN):
+            values["narration_on_demand"] = when == "on_demand"
+        elif when is not None:
+            errors["narration_when"] = "Choose when audio is made."
         voice = form.get("narration_voice_id", "").strip()
         if VOICE_ID_RE.match(voice):
             values["narration_voice_id"] = voice

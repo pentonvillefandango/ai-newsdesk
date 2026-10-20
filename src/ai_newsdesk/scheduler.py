@@ -271,6 +271,8 @@ class Scheduler:
         if not rs.narration_enabled:
             self._narration_last_outcome = NarrationOutcome.OFF
             return
+        if rs.narration_on_demand:  # only Make audio makes it (feedback-5)
+            return
         has_key = self.ctx.has_narration_key
         if has_key is not None and not await has_key():
             self._narration_last_outcome = NarrationOutcome.NO_KEY

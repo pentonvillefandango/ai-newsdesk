@@ -41,6 +41,7 @@ def test_defaults_match_contract() -> None:
         "why_it_matters": True,
         "hn_min_points": 100,
         "narration_enabled": True,
+        "narration_on_demand": False,
         "narration_voice_id": "pFZP5JQG7iQjIQuC4Bku",
         "narration_model": "eleven_v4",
         "narration_monthly_chars": 300_000,
@@ -213,6 +214,7 @@ async def test_openai_and_openrouter_keys_fall_back_to_env(
 def test_narration_defaults() -> None:
     rs = RuntimeSettings()
     assert rs.narration_enabled is True
+    assert rs.narration_on_demand is False  # made after each briefing unless asked (feedback-5)
     assert rs.narration_voice_id == "pFZP5JQG7iQjIQuC4Bku"  # Lily (feedback-4)
     assert rs.narration_model == "eleven_v4"
     assert rs.narration_monthly_chars == 300_000

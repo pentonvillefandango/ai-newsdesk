@@ -29,7 +29,9 @@ SUGGESTED_VOICES = (
     ("onwK4e9ZLuTAKqWW03F9", "Daniel", "British, steady broadcaster"),
     ("XrExE9yKIg1WjnnlVkGX", "Matilda", "American, professional"),
 )
-_SUGGESTED_NAMES = {vid: name for vid, name, _ in SUGGESTED_VOICES}
+# The voice setting's "Random (any voice)": a new voice each time audio is made (feedback-5).
+RANDOM_VOICE = "random"
+_SUGGESTED_NAMES = {vid: name for vid, name, _ in SUGGESTED_VOICES} | {RANDOM_VOICE: "Random voice"}
 
 
 def fallback_voice_name(voice_id: str) -> str:
@@ -100,6 +102,13 @@ class ElevenLabsCatalogue:
         self._data = data
         log.info("ElevenLabs catalogue refreshed: %d voices", len(voices))
         return True
+
+    def voice_ids(self) -> list[str]:
+        """The account's voices, or the suggested ones before the list has loaded."""
+        data = self._data
+        if data is not None and data.voices:
+            return [voice.voice_id for voice in data.voices]
+        return [vid for vid, _, _ in SUGGESTED_VOICES]
 
     def voice_name(self, voice_id: str) -> str:
         data = self._data

@@ -17,6 +17,7 @@ from ai_newsdesk.pipeline import BRIEFING_STORY_LIMIT, REVIEW_BATCH, WRITE_LIMIT
 from ai_newsdesk.pricing import UnknownModelError
 from ai_newsdesk.runtime_settings import RuntimeSettings
 from ai_newsdesk.scheduler import NIGHTLY_AT
+from ai_newsdesk.tts.catalogue import RANDOM_VOICE, fallback_voice_name
 from ai_newsdesk.web.model_choices import PROVIDER_NAMES, price_text
 
 StepKind = Literal["ai", "tool"]
@@ -89,15 +90,20 @@ def _judge_text(rs: RuntimeSettings) -> str:
 
 
 def _read_aloud(rs: RuntimeSettings, voice_name: str | None) -> FlowStep:
+    when = "After the briefing"
     if rs.narration_enabled:
-        text = f"ElevenLabs · {voice_name or rs.narration_voice_id} · {rs.narration_model}"
+        voice = fallback_voice_name(RANDOM_VOICE) if rs.narration_voice_id == RANDOM_VOICE else None
+        text = f"ElevenLabs · {voice or voice_name or rs.narration_voice_id} · {rs.narration_model}"
+        made = " Made after each briefing"
+        if rs.narration_on_demand:
+            when, made = "When you press Make audio", " Made only when you ask"
         detail = (
-            " Made after each briefing, counted in characters against its own monthly cap,"
+            f"{made}, counted in characters against its own monthly cap,"
             " separate from the dollar budget."
         )
     else:
         text, detail = "Off", " Switch it on in Settings."
-    return FlowStep("audio", "tool", "Read aloud", "After the briefing", f"{text}.{detail}")
+    return FlowStep("audio", "tool", "Read aloud", when, f"{text}.{detail}")
 
 
 def flow_steps(
