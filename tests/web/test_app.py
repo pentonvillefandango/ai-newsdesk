@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, ClassVar
 
 import pytest
@@ -9,8 +11,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from ai_newsdesk.app import create_app, nightly_jobs
+from ai_newsdesk.audio_files import AudioFiles
 from ai_newsdesk.clock import FixedClock
+from ai_newsdesk.models import VoiceInfo
 from ai_newsdesk.normalise import canonical_url
+from ai_newsdesk.store.store import Store
+from ai_newsdesk.tts.catalogue import ElevenLabsCatalogue
+from tests.fakes import FakeNarrator
+from tests.pipeline_ctx import make_ctx
 from tests.web.fakes import fake_ctx_factory
 from tests.web.support import BASE_URL, CONFIG_DIR, NOW, fixture_catalogue, make_settings, run
 
@@ -239,8 +247,9 @@ async def test_nightly_jobs_refresh_the_catalogue_in_the_background(
     monkeypatch.setattr("ai_newsdesk.app.taste.nightly", fake_taste)
     background: set[asyncio.Task[None]] = set()
     job = nightly_jobs(Cat(), background)  # type: ignore[arg-type]
+    no_audio = SimpleNamespace(audio=None, tts_catalogue=None, has_narration_key=None)
     with pytest.raises(RuntimeError):
-        await job(object())  # type: ignore[arg-type]
+        await job(no_audio)  # type: ignore[arg-type]
     # The job (which runs under the scheduler lock) returned without waiting for the fetch,
     # and a failed taste refit never skips the refresh.
     assert order == ["taste"]
@@ -249,6 +258,41 @@ async def test_nightly_jobs_refresh_the_catalogue_in_the_background(
     await asyncio.gather(*list(background))
     assert order == ["taste", "catalogue"]
     assert background == set()
+
+
+async def test_nightly_jobs_prune_audio_and_refresh_voices_only_with_a_key(
+    monkeypatch: pytest.MonkeyPatch, store: Store, clock: FixedClock, tmp_path: Path
+) -> None:
+    async def no_taste(ctx: object) -> None:
+        return None
+
+    class Cat:
+        async def refresh(self) -> bool:
+            return False
+
+    monkeypatch.setattr("ai_newsdesk.app.taste.nightly", no_taste)
+    ctx = make_ctx(store, clock)
+    ctx.audio = AudioFiles(tmp_path / "audio")
+    orphan = ctx.audio.write(date(2026, 10, 1), b"no row")
+    voices = FakeNarrator(voices_result=[VoiceInfo(voice_id="v1", name="V")], factors_result={})
+    ctx.tts_catalogue = ElevenLabsCatalogue(store, voices)
+    key = [False]
+
+    async def has_key() -> bool:
+        return key[0]
+
+    ctx.has_narration_key = has_key
+    background: set[asyncio.Task[None]] = set()
+    job = nightly_jobs(Cat(), background)  # type: ignore[arg-type]
+    await job(ctx)
+    assert orphan not in ctx.audio.names()
+    await asyncio.gather(*list(background))
+    assert ctx.tts_catalogue.cached() is None  # no key: no voice-list fetch
+    key[0] = True
+    await job(ctx)
+    await asyncio.gather(*list(background))
+    cached = ctx.tts_catalogue.cached()
+    assert cached is not None and [v.name for v in cached.voices] == ["V"]
 
 
 def test_startup_never_waits_for_the_catalogue_fetch(tmp_path: Path) -> None:

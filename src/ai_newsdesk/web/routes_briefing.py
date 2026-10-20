@@ -102,15 +102,26 @@ async def latest_briefing(request: Request, writing: str = "") -> HTMLResponse:
 
 
 async def _write_briefing_now(app: FastAPI) -> None:
-    """Write today's briefing under the scheduler lock. Logs and swallows any failure."""
+    """Write today's briefing under the scheduler lock, then make its audio under the lock
+    again (released in between, so a waiting job is not held up twice). Logs and swallows
+    any failure."""
     try:
         ctx = app.state.ctx
         today = ctx.clock.now().astimezone(ZoneInfo(ctx.settings.tz)).date()
         async with app.state.scheduler.lock:
-            if not await pipeline.run_briefing(ctx, today):
-                log.warning("manual briefing for %s was not written", today.isoformat())
+            written = await pipeline.run_briefing(ctx, today)
+        if not written:
+            log.warning("manual briefing for %s was not written", today.isoformat())
+            return
     except Exception:
         log.exception("manual briefing failed")
+        return
+    try:
+        async with app.state.scheduler.lock:
+            outcome = await pipeline.run_narration(ctx, today)
+        log.info("audio for the manual %s briefing: %s", today.isoformat(), outcome.value)
+    except Exception:
+        log.exception("audio for the manual briefing failed")
 
 
 @router.post("/briefing/write")

@@ -2,7 +2,13 @@
 briefing after briefing_time, and nightly upkeep after 03:30. Settings are re-read every tick,
 and one asyncio.Lock stops any two jobs from overlapping (a scheduled run waits up to 20 min
 for it; a manual one does not wait). A briefing that fails (returns False
-or raises) is retried every 30 minutes, at most 6 times per local day."""
+or raises) is retried every 30 minutes, at most 6 times per local day.
+
+Once the day's briefing exists and has no audio, the scheduler narrates it (feedback-3) under
+the lock, with its own counters: only a FAILED narration (or one that raises) uses an attempt,
+at most 3 a day, 30 minutes apart. OVER_CAP stops that day's tries; OFF and NO_KEY are checked
+again next tick, so switching the feature on works the same day. A tick that finds the lock
+held skips narration until the next tick. Narration never changes the briefing state."""
 
 from __future__ import annotations
 
@@ -15,7 +21,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from ai_newsdesk import pipeline
-from ai_newsdesk.pipeline import PipelineContext, RunReport
+from ai_newsdesk.pipeline import NarrationOutcome, PipelineContext, RunReport
 from ai_newsdesk.runtime_settings import load_runtime_settings
 
 log = logging.getLogger(__name__)
@@ -26,12 +32,15 @@ DEFAULT_BRIEFING_AT = time(7, 0)
 NIGHTLY_AT = time(3, 30)
 BRIEFING_RETRY_AFTER = timedelta(minutes=30)
 BRIEFING_MAX_ATTEMPTS = 6  # per local day
+NARRATION_RETRY_AFTER = timedelta(minutes=30)
+NARRATION_MAX_ATTEMPTS = 3  # per local day
 # A scheduled run waits this long for the lock (a Settings Test or a comparison may hold it)
 # before its slot is skipped. Manual runs never wait: they report "busy" at once.
 SCHEDULE_LOCK_WAIT_S = 20 * 60
 
 RunFn = Callable[[PipelineContext, str], Awaitable[RunReport]]
 BriefingFn = Callable[[PipelineContext, date], Awaitable[bool]]
+NarrationFn = Callable[[PipelineContext, date], Awaitable[NarrationOutcome]]
 NightlyFn = Callable[[PipelineContext], Awaitable[None]]
 
 
@@ -80,6 +89,14 @@ class BriefingStatus:
     gave_up: bool
 
 
+@dataclass(frozen=True)
+class NarrationStatus:
+    tries: int
+    max_tries: int
+    gave_up: bool
+    last_outcome: NarrationOutcome | None  # in memory: a restart forgets it
+
+
 class Scheduler:
     def __init__(
         self,
@@ -87,6 +104,7 @@ class Scheduler:
         *,
         run_fn: RunFn | None = None,
         briefing_fn: BriefingFn | None = None,
+        narration_fn: NarrationFn | None = None,
         nightly_fn: NightlyFn | None = None,
         tick_seconds: float = 60.0,
         schedule_wait_s: float = SCHEDULE_LOCK_WAIT_S,
@@ -94,6 +112,7 @@ class Scheduler:
         self.ctx = ctx
         self._run_fn: RunFn = run_fn or pipeline.run_once
         self._briefing_fn: BriefingFn = briefing_fn or pipeline.run_briefing
+        self._narration_fn: NarrationFn = narration_fn or pipeline.run_narration
         self._nightly_fn = nightly_fn
         self._tick_seconds = tick_seconds
         self._schedule_wait_s = schedule_wait_s
@@ -108,6 +127,12 @@ class Scheduler:
         self._briefing_try_day: date | None = None
         self._briefing_tries = 0
         self._briefing_last_try: datetime | None = None
+        self._narration_day: date | None = None  # the day whose audio is done
+        self._narration_try_day: date | None = None
+        self._narration_tries = 0
+        self._narration_last_try: datetime | None = None
+        self._narration_last_outcome: NarrationOutcome | None = None
+        self._narration_stopped = False  # OVER_CAP: no more tries on _narration_try_day
         self._nightly_day: date | None = None
         self.last_tick_at: datetime | None = None
         self.next_run_at: datetime | None = None
@@ -212,6 +237,56 @@ class Scheduler:
                 BRIEFING_MAX_ATTEMPTS,
             )
 
+    def narration_status(self, day: date) -> NarrationStatus:
+        """Read-only: the scheduler's narration tries and last outcome for `day`."""
+        if day != self._narration_try_day:
+            return NarrationStatus(0, NARRATION_MAX_ATTEMPTS, False, None)
+        tries = self._narration_tries
+        return NarrationStatus(
+            tries, NARRATION_MAX_ATTEMPTS, tries >= NARRATION_MAX_ATTEMPTS,
+            self._narration_last_outcome,
+        )  # fmt: skip
+
+    def _may_try_narration(self, day: date, now: datetime) -> bool:
+        if day != self._narration_try_day:
+            self._narration_try_day, self._narration_tries = day, 0
+            self._narration_last_try, self._narration_last_outcome = None, None
+            self._narration_stopped = False
+        if self._narration_stopped or self._narration_tries >= NARRATION_MAX_ATTEMPTS:
+            return False
+        last = self._narration_last_try
+        return last is None or now - last >= NARRATION_RETRY_AFTER
+
+    async def _maybe_narrate(self, day: date, now: datetime) -> None:
+        """Make `day`'s audio once its briefing exists (see the module docstring)."""
+        if day == self._narration_day or not self._may_try_narration(day, now):
+            return
+        if await self.ctx.store.get_briefing_audio(day) is not None:
+            self._narration_day = day
+            return
+        if self.lock.locked():  # never wait: try again next tick
+            return
+        try:
+            async with self.lock:
+                outcome = await self._narration_fn(self.ctx, day)
+        except Exception:  # an attempt, like FAILED
+            log.exception("audio for %s failed", day.isoformat())
+            outcome = NarrationOutcome.FAILED
+        self._narration_last_outcome = outcome
+        if outcome is NarrationOutcome.DONE:
+            self._narration_day = day
+        elif outcome is NarrationOutcome.OVER_CAP:
+            self._narration_stopped = True
+        elif outcome is NarrationOutcome.FAILED:
+            self._narration_tries += 1
+            self._narration_last_try = now
+            log.warning(
+                "no audio for %s (attempt %d of %d)",
+                day.isoformat(),
+                self._narration_tries,
+                NARRATION_MAX_ATTEMPTS,
+            )
+
     async def tick(self) -> None:
         now = self.ctx.clock.now()
         self.last_tick_at = now
@@ -229,6 +304,8 @@ class Scheduler:
         day = briefing_due(now, rs.briefing_time, tz)
         if day is not None and day != self._briefing_day:
             await self._maybe_brief(day, now)
+        if day is not None and day == self._briefing_day:
+            await self._maybe_narrate(day, now)
 
         if self._nightly_fn is not None:
             local = now.astimezone(tz)

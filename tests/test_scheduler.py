@@ -2,9 +2,13 @@ import asyncio
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from ai_newsdesk.clock import FixedClock
-from ai_newsdesk.pipeline import PipelineContext, RunReport
+from ai_newsdesk.pipeline import NarrationOutcome, PipelineContext, RunReport
 from ai_newsdesk.scheduler import (
+    NARRATION_MAX_ATTEMPTS,
+    NARRATION_RETRY_AFTER,
     Scheduler,
     briefing_due,
     latest_slot,
@@ -12,6 +16,7 @@ from ai_newsdesk.scheduler import (
     parse_hhmm,
     slot_times,
 )
+from ai_newsdesk.store.records import BriefingAudioRecord
 from ai_newsdesk.store.store import Store
 from tests.pipeline_ctx import make_ctx
 from tests.pipeline_helpers import MutableClock
@@ -347,3 +352,184 @@ async def test_briefing_status_reports_tries_and_give_up(store: Store) -> None:
     assert sched.briefing_status(day).gave_up is True
     assert sched.briefing_status(date(2026, 10, 15)).tries == 0  # another day: no attempts
     assert sched.briefing_status(day).tries == 6  # reading never resets the state
+
+
+class ScriptedNarration:
+    """Returns the scripted outcomes in order (an Exception is raised), then DONE. Records
+    whether the scheduler lock was held for each call."""
+
+    def __init__(self, sched_lock: list[asyncio.Lock], *results: NarrationOutcome | Exception):
+        self.results = list(results)
+        self.calls: list[tuple[datetime, date, bool]] = []
+        self._lock = sched_lock
+
+    async def __call__(self, ctx: PipelineContext, day: date) -> NarrationOutcome:
+        self.calls.append((ctx.clock.now(), day, self._lock[0].locked()))
+        result = self.results.pop(0) if self.results else NarrationOutcome.DONE
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+def narration_scheduler(
+    store: Store,
+    clock: FixedClock,
+    *results: NarrationOutcome | Exception,
+    briefing: FlakyBriefing | None = None,
+) -> tuple[Scheduler, ScriptedNarration]:
+    holder: list[asyncio.Lock] = []
+    fn = ScriptedNarration(holder, *results)
+    sched = Scheduler(
+        make_ctx(store, clock),
+        run_fn=Recorder().run,
+        briefing_fn=briefing or FlakyBriefing(),
+        narration_fn=fn,
+    )
+    holder.append(sched.lock)
+    return sched, fn
+
+
+BRIEF_AT = datetime(2026, 10, 14, 6, 0, tzinfo=UTC)  # 07:00 BST
+D = date(2026, 10, 14)
+
+
+async def _ticks(sched: Scheduler, clock: FixedClock, n: int, every_min: int = 30) -> None:
+    for _ in range(n):
+        await sched.tick()
+        clock.advance(timedelta(minutes=every_min))
+
+
+async def test_narration_follows_the_briefing_under_the_lock_and_done_ends_the_day(
+    store: Store,
+) -> None:
+    clock = FixedClock(BRIEF_AT)
+    sched, fn = narration_scheduler(store, clock)
+    await _ticks(sched, clock, 4)
+    assert [(day, locked) for _, day, locked in fn.calls] == [(D, True)]
+    st = sched.narration_status(D)
+    assert (st.tries, st.max_tries, st.gave_up, st.last_outcome) == (
+        0,
+        3,
+        False,
+        NarrationOutcome.DONE,
+    )
+
+
+async def test_no_narration_before_the_briefing_exists(store: Store) -> None:
+    clock = FixedClock(BRIEF_AT)
+    sched, fn = narration_scheduler(store, clock, briefing=FlakyBriefing(False))
+    await sched.tick()  # the briefing failed: nothing to narrate
+    assert fn.calls == []
+    clock.advance(timedelta(minutes=30))
+    await sched.tick()  # the retry wrote it: narration follows in the same tick
+    assert len(fn.calls) == 1
+
+
+async def test_failed_narration_is_retried_every_30_minutes_three_times_a_day(
+    store: Store,
+) -> None:
+    clock = FixedClock(BRIEF_AT)
+    failed = NarrationOutcome.FAILED
+    sched, fn = narration_scheduler(store, clock, *([failed] * 4))
+    await sched.tick()  # 07:00 attempt 1
+    clock.advance(timedelta(minutes=29))
+    await sched.tick()  # too soon
+    assert len(fn.calls) == 1
+    assert sched.narration_status(D).tries == 1
+    clock.advance(timedelta(minutes=1))
+    await _ticks(sched, clock, 6)  # 07:30 attempt 2, 08:00 attempt 3, then it gives up
+    assert [at.astimezone(LONDON).time() for at, _, _ in fn.calls] == [
+        time(7, 0),
+        time(7, 30),
+        time(8, 0),
+    ]
+    st = sched.narration_status(D)
+    assert (st.tries, st.gave_up, st.last_outcome) == (3, True, NarrationOutcome.FAILED)
+    clock.set(datetime(2026, 10, 15, 6, 0, tzinfo=UTC))  # next day: fresh attempts
+    await _ticks(sched, clock, 2)
+    assert [day for _, day, _ in fn.calls[3:]] == [date(2026, 10, 15)] * 2
+    assert sched.narration_status(date(2026, 10, 15)).tries == 1
+    assert sched.narration_status(D).tries == 0  # only the current day is remembered
+
+
+@pytest.mark.parametrize("outcome", [NarrationOutcome.OFF, NarrationOutcome.NO_KEY])
+async def test_off_and_no_key_use_no_attempts_and_are_rechecked_next_tick(
+    store: Store, outcome: NarrationOutcome
+) -> None:
+    clock = FixedClock(BRIEF_AT)
+    sched, fn = narration_scheduler(store, clock, outcome, outcome, outcome, outcome)
+    await _ticks(sched, clock, 4, every_min=1)
+    st = sched.narration_status(D)
+    assert (st.tries, st.gave_up, st.last_outcome) == (0, False, outcome)
+    await _ticks(sched, clock, 2, every_min=1)  # switched on (or a key added): done today
+    assert len(fn.calls) == 5
+    assert sched.narration_status(D).last_outcome is NarrationOutcome.DONE
+
+
+async def test_over_cap_stops_the_day_without_using_an_attempt(store: Store) -> None:
+    clock = FixedClock(BRIEF_AT)
+    sched, fn = narration_scheduler(store, clock, NarrationOutcome.OVER_CAP)
+    await _ticks(sched, clock, 6)
+    assert len(fn.calls) == 1
+    st = sched.narration_status(D)
+    assert (st.tries, st.gave_up, st.last_outcome) == (0, False, NarrationOutcome.OVER_CAP)
+    clock.set(datetime(2026, 10, 15, 6, 0, tzinfo=UTC))
+    await sched.tick()  # a new day tries again
+    assert len(fn.calls) == 2
+
+
+async def test_a_narration_exception_is_a_failed_attempt_and_leaves_the_briefing_alone(
+    store: Store,
+) -> None:
+    clock = FixedClock(BRIEF_AT)
+    briefing = FlakyBriefing()
+    sched, fn = narration_scheduler(store, clock, RuntimeError("tts down"), briefing=briefing)
+    await sched.tick()
+    assert not sched.lock.locked()
+    st = sched.narration_status(D)
+    assert (st.tries, st.last_outcome) == (1, NarrationOutcome.FAILED)
+    assert sched.briefing_status(D).tries == 1
+    await _ticks(sched, clock, 3)
+    assert len(briefing.calls) == 1  # the briefing is still done: never rewritten
+    assert len(fn.calls) == 2  # the retry succeeded
+
+
+async def test_existing_audio_means_no_narration(store: Store) -> None:
+    clock = FixedClock(BRIEF_AT)
+    await store.save_briefing(D, "m", "body", [], clock.now())
+    await store.save_briefing_audio(
+        BriefingAudioRecord(
+            date=D,
+            voice_id="v",
+            voice_name="V",
+            model_id="eleven_v4",
+            characters=1,
+            bytes=1,
+            file="briefing-2026-10-14-aaaaaaaa.mp3",
+            created_at=clock.now(),
+        )
+    )
+    sched, fn = narration_scheduler(store, clock)
+    await _ticks(sched, clock, 3)
+    assert fn.calls == []
+
+
+async def test_a_held_lock_delays_narration_without_using_an_attempt(store: Store) -> None:
+    clock = FixedClock(BRIEF_AT)
+    await store.save_briefing(D, "m", "body", [], clock.now())  # the briefing is done already
+    sched, fn = narration_scheduler(store, clock, NarrationOutcome.FAILED)
+    await sched.lock.acquire()
+    try:
+        await sched.tick()
+    finally:
+        sched.lock.release()
+    assert fn.calls == []
+    assert sched.narration_status(D).tries == 0
+    clock.advance(timedelta(minutes=1))
+    await sched.tick()
+    assert len(fn.calls) == 1
+
+
+def test_the_narration_retry_constants() -> None:
+    assert NARRATION_MAX_ATTEMPTS == 3
+    assert timedelta(minutes=30) == NARRATION_RETRY_AFTER

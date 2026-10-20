@@ -307,6 +307,55 @@ def test_write_now_starts_a_background_briefing(
     )
 
 
+@pytest.mark.parametrize("written", [True, False])
+def test_write_now_narrates_after_a_written_briefing(
+    app: FastAPI, client: TestClient, monkeypatch: pytest.MonkeyPatch, written: bool
+) -> None:
+    lock: asyncio.Lock = app.state.scheduler.lock
+    events: list[tuple[str, date, bool]] = []
+
+    async def fake_run_briefing(ctx: object, day: date) -> bool:
+        events.append(("brief", day, lock.locked()))
+        return written
+
+    async def fake_run_narration(ctx: object, day: date) -> pipeline.NarrationOutcome:
+        events.append(("narrate", day, lock.locked()))
+        return pipeline.NarrationOutcome.DONE
+
+    monkeypatch.setattr(pipeline, "run_briefing", fake_run_briefing)
+    monkeypatch.setattr(pipeline, "run_narration", fake_run_narration)
+    client.post("/briefing/write", data={"csrf_token": csrf_token(client)}, follow_redirects=False)
+
+    async def drain() -> None:
+        await asyncio.gather(*app.state.background)
+
+    run(client, drain)
+    today = date(2026, 10, 14)
+    expected = [("brief", today, True)] + ([("narrate", today, True)] if written else [])
+    assert events == expected
+    assert not lock.locked()
+
+
+def test_write_now_swallows_a_narration_failure(
+    app: FastAPI, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake_run_briefing(ctx: object, day: date) -> bool:
+        return True
+
+    async def boom(ctx: object, day: date) -> pipeline.NarrationOutcome:
+        raise RuntimeError("tts down")
+
+    monkeypatch.setattr(pipeline, "run_briefing", fake_run_briefing)
+    monkeypatch.setattr(pipeline, "run_narration", boom)
+    client.post("/briefing/write", data={"csrf_token": csrf_token(client)}, follow_redirects=False)
+
+    async def drain() -> None:
+        await asyncio.gather(*app.state.background)
+
+    run(client, drain)
+    assert not app.state.scheduler.lock.locked()
+
+
 def test_write_now_swallows_a_failure(
     app: FastAPI, client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

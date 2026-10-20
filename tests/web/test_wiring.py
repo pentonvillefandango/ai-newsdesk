@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from ai_newsdesk import pipeline
 from ai_newsdesk.app import create_app
 from ai_newsdesk.clock import FixedClock
 from ai_newsdesk.consolidate import LLMConsolidator
@@ -21,6 +22,8 @@ from ai_newsdesk.llm.openai_client import OpenAICompatibleClient
 from ai_newsdesk.pipeline import PipelineContext
 from ai_newsdesk.runtime_settings import update_runtime_settings
 from ai_newsdesk.store import Store
+from ai_newsdesk.tts.catalogue import ElevenLabsCatalogue
+from ai_newsdesk.tts.elevenlabs import ElevenLabsNarrator
 from ai_newsdesk.writer import LLMWriter
 from tests.web.support import BASE_URL, CONFIG_DIR, NOW, fixture_catalogue, make_settings, run
 
@@ -241,3 +244,20 @@ def test_rebuilds_never_overlap(tmp_path: Path) -> None:
         assert built == ["first", "second"]
         assert app.state.ctx == "second"
         assert app.state.scheduler.ctx == "second"
+
+
+def test_read_aloud_is_wired_and_says_no_key_without_one(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app, base_url=BASE_URL) as c:
+        _settle(c, app)
+        ctx: PipelineContext = app.state.ctx
+        assert isinstance(ctx.narrator, ElevenLabsNarrator)
+        assert isinstance(ctx.tts_catalogue, ElevenLabsCatalogue)
+        assert ctx.audio is not None
+        assert ctx.audio.path("briefing-2026-10-14-aaaaaaaa.mp3").parent == tmp_path / "audio"
+        day = NOW.date()
+        run(c, ctx.store.save_briefing, day, "m", "## Labs\n\nNews.", [], NOW)
+        assert run(c, pipeline.run_narration, ctx, day) is pipeline.NarrationOutcome.NO_KEY
+        assert ctx.has_narration_key is not None
+        run(c, app.state.api_keys.set_api_key, "elevenlabs", "el-" + "k" * 30, NOW)
+        assert run(c, ctx.has_narration_key) is True  # read per call: a saved key applies

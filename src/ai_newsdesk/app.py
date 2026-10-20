@@ -16,7 +16,8 @@ from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ai_newsdesk import compare, taste
+from ai_newsdesk import compare, pipeline, taste
+from ai_newsdesk.audio_files import AudioFiles
 from ai_newsdesk.budget import Budget
 from ai_newsdesk.clock import SystemClock
 from ai_newsdesk.config import Settings
@@ -43,6 +44,8 @@ from ai_newsdesk.runtime_settings import (
 from ai_newsdesk.scheduler import NightlyFn, Scheduler
 from ai_newsdesk.sources.registry import build_sources
 from ai_newsdesk.store import Store
+from ai_newsdesk.tts.catalogue import ElevenLabsCatalogue
+from ai_newsdesk.tts.elevenlabs import ElevenLabsNarrator
 from ai_newsdesk.web.app_routes import build_router
 from ai_newsdesk.web.deps import STATIC_DIR
 from ai_newsdesk.web.keys import KeyTester, default_key_testers
@@ -122,6 +125,15 @@ async def build_context(deps: AppDeps) -> PipelineContext:
         )
     else:
         judge = LLMJudge(job_client("judge", runtime.judge_provider, runtime.judge_model))
+    # Read aloud: always built, so a key saved later applies at once (narration says NO_KEY
+    # until then). The key is read per call and never kept here.
+    narrator = ElevenLabsNarrator(deps.http, lambda: keys.resolve_api_key("elevenlabs"))
+    tts_catalogue = ElevenLabsCatalogue(store, narrator)
+    await tts_catalogue.load()
+
+    async def has_narration_key() -> bool:
+        return bool(await keys.resolve_api_key("elevenlabs"))
+
     return PipelineContext(
         store=store,
         sources=build_sources(deps.http, research, deps.clock),
@@ -145,6 +157,10 @@ async def build_context(deps: AppDeps) -> PipelineContext:
                 cache_system=False,
             )
         ),
+        narrator=narrator,
+        audio=AudioFiles(Path(settings.db_path).parent / "audio"),
+        tts_catalogue=tts_catalogue,
+        has_narration_key=has_narration_key,
     )
 
 
@@ -173,17 +189,45 @@ def refresh_in_background(
     return task
 
 
+def refresh_voices_in_background(
+    ctx: PipelineContext, background: set[asyncio.Task[None]]
+) -> asyncio.Task[None] | None:
+    """Refresh the ElevenLabs voice list and credit factors without blocking the caller, and
+    only when a key exists. A failure is logged; the last good copy stays."""
+    catalogue, has_key = ctx.tts_catalogue, ctx.has_narration_key
+    if catalogue is None or has_key is None:
+        return None
+
+    async def refresh() -> None:
+        try:
+            if await has_key():
+                await catalogue.refresh()
+        except Exception as exc:  # never an unhandled background failure
+            log.warning("ElevenLabs catalogue refresh failed (%s)", type(exc).__name__)
+
+    task = asyncio.create_task(refresh(), name="voices-refresh")
+    background.add(task)
+    task.add_done_callback(background.discard)
+    return task
+
+
 def nightly_jobs(
     catalogue: ModelCatalogue, background: set[asyncio.Task[None]], then: Rebuild | None = None
 ) -> NightlyFn:
-    """The nightly chain: the taste refit, then a background catalogue refresh, even when the
-    refit fails. The fetch runs outside the scheduler lock, so it never delays a run."""
+    """The nightly chain: the taste refit, the audio prune (both under the scheduler lock),
+    then background refreshes of the model list and the ElevenLabs voices, even when an
+    earlier step fails. The fetches run outside the lock, so they never delay a run."""
 
     async def run(ctx: PipelineContext) -> None:
         try:
             await taste.nightly(ctx)
         finally:
+            try:
+                await pipeline.prune_audio(ctx)
+            except Exception:  # upkeep is retried tomorrow
+                log.exception("audio upkeep failed")
             refresh_in_background(catalogue, background, then)
+            refresh_voices_in_background(ctx, background)
 
     return run
 
