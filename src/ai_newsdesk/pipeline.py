@@ -108,7 +108,7 @@ class PipelineContext:
     # Read aloud (feedback-3). No narrator or no audio directory: narration is off.
     narrator: Narrator | None = None
     audio: AudioFiles | None = None
-    tts_catalogue: ElevenLabsCatalogue | None = None  # None: voice ids, factor 1.0
+    tts_catalogue: ElevenLabsCatalogue | None = None  # None: suggested names or ids, factor 1.0
     # Whether an ElevenLabs key resolves; None leaves it to the narrator's own answer.
     has_narration_key: Callable[[], Awaitable[bool]] | None = None
 
