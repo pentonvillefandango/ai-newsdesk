@@ -159,7 +159,7 @@
             {{ error("narration_monthly_chars") }}
           </div>
         </div>
-        <p class="field__hint" id="read-aloud-usage">This month: {{ tts_chars }} of {{ tts_cap }} characters used.{% if tts_quota %} ElevenLabs says {{ tts_quota.character_limit - tts_quota.character_count }} of {{ tts_quota.character_limit }} left on your {{ tts_quota.tier }} plan.{% endif %}</p>
+        <p class="field__hint" id="read-aloud-usage">This month: {{ tts_chars|thousands }} of {{ tts_cap|thousands }} characters used.{% if tts_quota %} ElevenLabs says {{ tts_quota_left|thousands }} of {{ tts_quota.character_limit|thousands }} left on your {{ tts_quota.tier }} plan.{% endif %}</p>
       </div>
     </section>
 

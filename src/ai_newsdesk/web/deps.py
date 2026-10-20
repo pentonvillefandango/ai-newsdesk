@@ -172,6 +172,7 @@ templates.env.globals.update(
     source_detail=source_detail,
 )
 templates.env.filters["safe_url"] = safe_url
+templates.env.filters["thousands"] = lambda n: f"{n:,}"  # 12345 -> "12,345"
 
 
 def store_of(request: Request) -> Store:

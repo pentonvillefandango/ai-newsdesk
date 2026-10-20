@@ -215,8 +215,9 @@ class _Narr:
 
 def test_usage_line_own_meter_only_without_a_key(app: FastAPI, client: TestClient) -> None:
     sec = _section(client.get("/settings").text)
-    assert "This month: 0 of 300000 characters used." in sec
+    assert "This month: 0 of 300,000 characters used." in sec
     assert "ElevenLabs says" not in sec
+    assert 'value="300000"' in sec  # the cap input stays a plain number
 
 
 def test_usage_line_with_quota_cached_ten_minutes(app: FastAPI, client: TestClient) -> None:
@@ -224,12 +225,25 @@ def test_usage_line_with_quota_cached_ten_minutes(app: FastAPI, client: TestClie
     narr = _Narr(QuotaInfo(tier="creator", character_count=100_000, character_limit=363_000))
     app.state.deps.narrator = narr
     sec = _section(client.get("/settings").text)
-    assert "ElevenLabs says 263000 of 363000 left on your creator plan." in sec
+    assert "ElevenLabs says 263,000 of 363,000 left on your creator plan." in sec
     client.get("/settings")
     assert narr.calls == 1  # cached
     app.state.quota_cache = (NOW - timedelta(minutes=11), app.state.quota_cache[1])
     client.get("/settings")
     assert narr.calls == 2
+
+
+def test_usage_line_has_thousands_separators_and_never_a_negative_left(
+    app: FastAPI, client: TestClient
+) -> None:
+    _key(client, app)
+    run(client, app.state.store.record_tts_usage, NOW, NOW.date(), "eleven_v4", 12_345, ok=True)
+    app.state.deps.narrator = _Narr(
+        QuotaInfo(tier="creator", character_count=370_000, character_limit=363_000)
+    )
+    sec = _section(client.get("/settings").text)
+    assert "This month: 12,345 of 300,000 characters used." in sec
+    assert "ElevenLabs says 0 of 363,000 left on your creator plan." in sec
 
 
 @pytest.mark.parametrize("narr", [_Narr(None), _Narr(None, boom=True)])
@@ -361,14 +375,18 @@ def test_key_goes_only_to_elevenlabs_hosts(app: FastAPI, client: TestClient) -> 
 
 def test_sample_never_follows_redirects(app: FastAPI, client: TestClient) -> None:
     _seed(client, app)
-    seen = _mock(
-        app,
-        httpx.MockTransport(
-            lambda req: httpx.Response(302, headers={"location": "https://evil.example/a"})
-        ),
-    )
+    seen: list[httpx.Request] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        if req.url.host == "evil.example":
+            return httpx.Response(200, content=b"ID3evil", headers={"content-type": "audio/mpeg"})
+        return httpx.Response(302, headers={"location": "https://evil.example/a"})
+
+    _mock(app, httpx.MockTransport(handle))
     r = client.get("/settings/voice-sample/zed1")
-    assert (r.status_code == 502 and len(seen) == 0) or r.status_code == 502
+    assert r.status_code == 502
+    assert [str(req.url) for req in seen] == [GOOD_URL]  # one request; the target never asked
 
 
 def test_sample_over_two_megabytes_is_502(app: FastAPI, client: TestClient) -> None:

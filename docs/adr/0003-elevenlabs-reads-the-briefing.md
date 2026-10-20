@@ -31,6 +31,6 @@ ElevenLabs bills in credits (characters times a model factor), not dollars, so t
 
 - At one briefing a day, about 165k of the 363,000 characters a month on Creator are used, well under the 300,000 cap; even the design's 217k estimate fits. Remaking audio by hand spends again.
 - About 3 to 4 MB a day, about 100 MB at 30 days, on the `app-data` volume. Backups do not include audio; a restore leaves rows whose files are gone, and Make audio recreates them at a character cost.
-- A new key (`ELEVENLABS_API_KEY` or saved in Settings) and a switch to turn the whole feature off. Without a key or when off, nothing is sent and no run lock is taken.
+- A new key (`ELEVENLABS_API_KEY` or saved in Settings) and a switch to turn the whole feature off. Without a key or when off, nothing is sent and the *scheduler* takes no run lock for audio; Write it now and Make audio take it briefly (narration then finds it off or keyless and returns at once).
 - The meter can over-count after a timeout, so the cap may stop audio slightly early; raising the cap or waiting for the month to roll over fixes it.
 - Narrated text is built from the stored briefing, which is derived from untrusted news. It only ever goes to the voice API as text, never as instructions to us.

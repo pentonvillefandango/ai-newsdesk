@@ -189,6 +189,9 @@ async def _render(
             "tts_chars": tts_chars,
             "tts_cap": runtime.narration_monthly_chars,
             "tts_quota": quota,
+            "tts_quota_left": (
+                max(0, quota.character_limit - quota.character_count) if quota else None
+            ),
             "has_tts_key": has_tts_key,
             "keys": keys,
             "key_labels": KEY_LABELS,
