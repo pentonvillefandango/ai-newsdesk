@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Briefing on Newsdesk{% endblock %}
+{% block scripts %}{% if listen and listen.audio %}<script src="/static/briefing-audio.js" defer></script>{% endif %}{% endblock %}
 {% block content %}
 {% if writing == "1" %}
 <div class="notice notice--ok" role="status"><p>Writing today's briefing. This takes about a minute; reload to see it.</p></div>
@@ -30,6 +31,27 @@
       <p class="lede">The first one is written at {{ runtime.briefing_time }} from the day's top stories. You can change the time in <a href="/settings#schedule">Settings</a>.</p>
       {% endif %}
     </header>
+    {% if listen %}
+    <section class="listen" aria-label="Listen to this briefing">
+      {% if listen.audio %}
+      <audio controls preload="metadata" src="/briefing/{{ briefing.date.isoformat() }}/audio.mp3"></audio>
+      <div class="listen__speed" role="group" aria-label="Playback speed">
+        <button type="button" data-rate="1" aria-pressed="true">1×</button>
+        <button type="button" data-rate="1.25" aria-pressed="false">1.25×</button>
+        <button type="button" data-rate="1.5" aria-pressed="false">1.5×</button>
+      </div>
+      <p class="listen__note">Read by {{ listen.audio.voice_name }} · {{ listen.minutes }} min · made {{ listen.audio.created_at.astimezone(zone).strftime("%H:%M") }}</p>
+      {% else %}
+      <p class="listen__note" role="status">{{ listen.reason }}</p>
+      {% endif %}
+      {% if listen.can_make %}
+      <form method="post" action="/briefing/{{ briefing.date.isoformat() }}/audio">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button button--quiet button--small">{% if listen.audio %}Remake audio{% else %}Make audio{% endif %}</button>
+      </form>
+      {% endif %}
+    </section>
+    {% endif %}
     {% if blocks %}
     <div class="read">
       {% for block in blocks %}
