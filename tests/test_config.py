@@ -24,6 +24,7 @@ def test_defaults(settings_factory: SettingsFactory) -> None:
     assert s.login_enabled is False
     assert (s.anthropic_api_key, s.research_engine_api_key, s.typesafe_api_key) == ("", "", "")
     assert (s.openai_api_key, s.openrouter_api_key) == ("", "")
+    assert s.elevenlabs_api_key == ""
 
 
 def test_reads_environment(settings_factory: SettingsFactory) -> None:
@@ -77,12 +78,14 @@ def test_secrets_not_in_repr(settings_factory: SettingsFactory) -> None:
         anthropic_api_key="sk-test-" + "a" * 20,
         openai_api_key="sk-oa-" + "b" * 20,
         openrouter_api_key="sk-or-" + "c" * 20,
+        elevenlabs_api_key="xi-" + "d" * 20,
     )
     for text in (repr(s), str(s)):
         assert TEST_SECRETS_KEY not in text
         assert TEST_SESSION_SECRET not in text
         assert "sk-test-" not in text
         assert "sk-oa-" not in text and "sk-or-" not in text
+        assert "xi-ddd" not in text
     assert "ai-newsdesk.localhost" in repr(s)
 
 

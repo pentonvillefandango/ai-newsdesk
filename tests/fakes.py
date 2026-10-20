@@ -3,6 +3,8 @@
 Each fake records its calls so tests can assert on what the code under test asked for.
 """
 
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from ai_newsdesk.models import (
@@ -10,7 +12,9 @@ from ai_newsdesk.models import (
     Candidate,
     Category,
     JudgeResult,
+    NarrationResult,
     Purpose,
+    QuotaInfo,
     ReviewInput,
     SearchHit,
     SourceConfig,
@@ -20,6 +24,7 @@ from ai_newsdesk.models import (
     Trust,
     Usage,
     Verdict,
+    VoiceInfo,
     WriteInput,
 )
 
@@ -285,3 +290,47 @@ class FakeWriter:
             output_tokens=800,
         )
         return self.briefing_body, [usage]
+
+
+@dataclass
+class NarrateCall:
+    text_chunks: list[str]
+    voice_id: str
+    model_id: str
+    credit_factor: float
+
+
+class FakeNarrator:
+    """A scripted Narrator: `result` for every narrate call (after the optional `during` hook,
+    which lets a test change the world mid-call); `voices_result`/`factors_result` as given."""
+
+    def __init__(
+        self,
+        result: NarrationResult | None = None,
+        *,
+        voices_result: list[VoiceInfo] | None = None,
+        factors_result: dict[str, float] | None = None,
+        during: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
+        self.result = result or NarrationResult(audio=b"ID3-fake-mp3", characters_billed=100)
+        self.voices_result = voices_result
+        self.factors_result = factors_result
+        self.during = during
+        self.calls: list[NarrateCall] = []
+
+    async def narrate(
+        self, text_chunks: list[str], *, voice_id: str, model_id: str, credit_factor: float
+    ) -> NarrationResult:
+        self.calls.append(NarrateCall(list(text_chunks), voice_id, model_id, credit_factor))
+        if self.during is not None:
+            await self.during()
+        return self.result
+
+    async def voices(self) -> list[VoiceInfo] | None:
+        return self.voices_result
+
+    async def model_factors(self) -> dict[str, float] | None:
+        return self.factors_result
+
+    async def quota(self) -> QuotaInfo | None:
+        return None

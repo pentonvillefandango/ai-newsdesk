@@ -46,7 +46,11 @@ class _Assets(HTMLParser):
 
 
 # Pages that add their own static script after the base two (progressive enhancement only).
-PAGE_SCRIPTS = {"/models": ["/static/models.js"], "/compare": ["/static/models.js"]}
+PAGE_SCRIPTS = {
+    "/settings": ["/static/voice-sample.js"],
+    "/models": ["/static/models.js"],
+    "/compare": ["/static/models.js"],
+}
 
 
 def _check_page(html: str, where: str) -> None:

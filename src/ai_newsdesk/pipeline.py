@@ -11,17 +11,24 @@ run, up to MAX_REVIEW_ATTEMPTS; a story the writer leaves out is counted with
 removed) is skipped with a warning, so the other verdicts are still saved; items a crashed run
 left `new` are put back through the pre-filter by the next run; and the runs row is always
 finished, with error "cancelled" when the task is cancelled.
+
+`run_narration` is the one code path that turns a day's briefing into an MP3 (feedback-3). It
+never takes the scheduler lock: its callers hold it.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+import math
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from enum import StrEnum
+from zoneinfo import ZoneInfo
 
 from ai_newsdesk import cluster, prefilter
+from ai_newsdesk.audio_files import AudioFiles
 from ai_newsdesk.briefing import briefing_date_label
 from ai_newsdesk.budget import Budget
 from ai_newsdesk.config import Settings
@@ -38,9 +45,21 @@ from ai_newsdesk.models import (
     SourceResult,
     Verdict,
 )
-from ai_newsdesk.protocols import Clock, Consolidator, Judge, ResearchEngine, Source, Writer
+from ai_newsdesk.narration import chunks, speech_text
+from ai_newsdesk.protocols import (
+    NO_NARRATION_KEY,
+    Clock,
+    Consolidator,
+    Judge,
+    Narrator,
+    ResearchEngine,
+    Source,
+    Writer,
+)
 from ai_newsdesk.runtime_settings import RuntimeSettings, load_runtime_settings
+from ai_newsdesk.store.records import BriefingAudioRecord
 from ai_newsdesk.store.store import Store
+from ai_newsdesk.tts.catalogue import ElevenLabsCatalogue
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +69,8 @@ WRITE_BATCH = 10
 WRITE_LIMIT = 50
 QUEUE_EXPIRY_HOURS = 48
 BRIEFING_STORY_LIMIT = 15
+AUDIO_KEEP_DAYS = 30
+AUDIO_TEMP_MAX_AGE = timedelta(hours=1)
 
 COUNT_KEYS = (
     "sources",
@@ -84,6 +105,12 @@ class PipelineContext:
     clock: Clock
     settings: Settings
     consolidator: Consolidator | None = None  # None: the consolidation step is off
+    # Read aloud (feedback-3). No narrator or no audio directory: narration is off.
+    narrator: Narrator | None = None
+    audio: AudioFiles | None = None
+    tts_catalogue: ElevenLabsCatalogue | None = None  # None: voice ids, factor 1.0
+    # Whether an ElevenLabs key resolves; None leaves it to the narrator's own answer.
+    has_narration_key: Callable[[], Awaitable[bool]] | None = None
 
 
 @dataclass
@@ -436,3 +463,121 @@ async def run_briefing(ctx: PipelineContext, day: date) -> bool:
     model = usage[0].model if usage else ctx.writer.model
     await ctx.store.save_briefing(day, model, body, [s.story_id for s in stories], now)
     return True
+
+
+class NarrationOutcome(StrEnum):
+    DONE = "done"
+    OFF = "off"
+    NO_KEY = "no_key"
+    NO_BRIEFING = "no_briefing"
+    OVER_CAP = "over_cap"
+    FAILED = "failed"
+    BUSY = "busy"  # for callers that find the lock held; run_narration never returns it
+
+
+async def run_narration(ctx: PipelineContext, day: date) -> NarrationOutcome:
+    """Make (or remake) `day`'s briefing audio. The caller holds the scheduler lock.
+
+    Billed characters (or maybe billed: a timeout, a 5xx, chunks already made) are always
+    recorded; a clean refusal records nothing. A briefing rewritten while the audio was being
+    made throws the new audio away (FAILED)."""
+    rs = await load_runtime_settings(ctx.store)
+    narrator, audio = ctx.narrator, ctx.audio
+    if not rs.narration_enabled or narrator is None or audio is None:
+        return NarrationOutcome.OFF
+    if ctx.has_narration_key is not None and not await ctx.has_narration_key():
+        return NarrationOutcome.NO_KEY
+    briefing = await ctx.store.get_briefing(day)
+    if briefing is None:
+        return NarrationOutcome.NO_BRIEFING
+    text = speech_text(briefing.body, briefing_date_label(day))
+    catalogue = ctx.tts_catalogue
+    factor = catalogue.factor(rs.narration_model) if catalogue is not None else 1.0
+    estimate = math.ceil(len(text) * factor)
+    used = await ctx.store.month_tts_characters(ctx.clock.now(), ctx.settings.tz)
+    if used + estimate > rs.narration_monthly_chars:
+        log.warning(
+            "no audio for %s: %d of %d characters used this month, this one needs about %d"
+            " (the monthly allowance)",
+            day.isoformat(),
+            used,
+            rs.narration_monthly_chars,
+            estimate,
+        )
+        return NarrationOutcome.OVER_CAP
+    try:
+        result = await narrator.narrate(
+            chunks(text),
+            voice_id=rs.narration_voice_id,
+            model_id=rs.narration_model,
+            credit_factor=factor,
+        )
+    except asyncio.CancelledError:  # shutdown mid-request: it may still be billed
+        await ctx.store.record_tts_usage(
+            ctx.clock.now(), day, rs.narration_model, estimate, ok=False
+        )
+        raise
+    if result.characters_billed:
+        await ctx.store.record_tts_usage(
+            ctx.clock.now(),
+            day,
+            rs.narration_model,
+            result.characters_billed,
+            ok=result.audio is not None,
+        )
+    if result.audio is None:
+        if result.error == NO_NARRATION_KEY:
+            return NarrationOutcome.NO_KEY
+        log.warning("audio for %s failed: %s", day.isoformat(), result.error)
+        return NarrationOutcome.FAILED
+    name = audio.write(day, result.audio)
+    current = await ctx.store.get_briefing(day)
+    if current is None or current.body != briefing.body:
+        audio.delete(name)
+        log.warning("the %s briefing changed while its audio was made; discarded", day)
+        return NarrationOutcome.FAILED
+    old = await ctx.store.save_briefing_audio(
+        BriefingAudioRecord(
+            date=day,
+            voice_id=rs.narration_voice_id,
+            voice_name=(
+                catalogue.voice_name(rs.narration_voice_id)
+                if catalogue is not None
+                else rs.narration_voice_id
+            ),
+            model_id=rs.narration_model,
+            characters=result.characters_billed,
+            bytes=len(result.audio),
+            file=name,
+            created_at=ctx.clock.now(),
+        )
+    )
+    if old is not None and old != name:
+        audio.delete(old)
+    log.info("audio for %s made: %d bytes", day.isoformat(), len(result.audio))
+    return NarrationOutcome.DONE
+
+
+async def prune_audio(ctx: PipelineContext) -> int:
+    """Nightly upkeep (the caller holds the lock): delete audio rows and files for briefing
+    days more than AUDIO_KEEP_DAYS before today, `briefing-*.mp3` files with no row, and temp
+    files older than AUDIO_TEMP_MAX_AGE. Returns how many files went; no other file is touched."""
+    audio = ctx.audio
+    if audio is None:
+        return 0
+    now = ctx.clock.now()
+    today = now.astimezone(ZoneInfo(ctx.settings.tz)).date()
+    removed = 0
+    for rec in await ctx.store.audio_older_than(today - timedelta(days=AUDIO_KEEP_DAYS)):
+        name = await ctx.store.delete_briefing_audio(rec.date)
+        if name is not None:
+            audio.delete(name)
+            removed += 1
+    in_use = {rec.file for rec in await ctx.store.audio_older_than(date.max)}
+    for name in audio.names() - in_use:
+        audio.delete(name)
+        removed += 1
+    removed += audio.delete_temps_before((now - AUDIO_TEMP_MAX_AGE).timestamp())
+    if removed:
+        log.info("audio upkeep: %d old or orphaned files removed", removed)
+    return removed

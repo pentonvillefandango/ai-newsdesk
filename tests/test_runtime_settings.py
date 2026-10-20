@@ -40,6 +40,10 @@ def test_defaults_match_contract() -> None:
         "show_threshold": 4,
         "why_it_matters": True,
         "hn_min_points": 100,
+        "narration_enabled": True,
+        "narration_voice_id": "onwK4e9ZLuTAKqWW03F9",
+        "narration_model": "eleven_v4",
+        "narration_monthly_chars": 300_000,
     }
 
 
@@ -204,3 +208,32 @@ async def test_openai_and_openrouter_keys_fall_back_to_env(
     assert await keys.resolve_api_key("openrouter") == UI_KEY
     status = await keys.api_key_status("openai")
     assert (status.set_in_ui, status.set_in_env) == (False, True)
+
+
+def test_narration_defaults() -> None:
+    rs = RuntimeSettings()
+    assert rs.narration_enabled is True
+    assert rs.narration_voice_id == "onwK4e9ZLuTAKqWW03F9"
+    assert rs.narration_model == "eleven_v4"
+    assert rs.narration_monthly_chars == 300_000
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"narration_monthly_chars": -1},
+        {"narration_monthly_chars": 10_000_001},
+        {"narration_voice_id": ""},
+        {"narration_model": ""},
+    ],
+)
+def test_narration_invalid_values_refused(bad: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        RuntimeSettings.model_validate(bad)
+
+
+async def test_elevenlabs_key_falls_back_to_env(
+    store: Store, settings_factory: SettingsFactory
+) -> None:
+    keys = ApiKeys(store, settings_factory(elevenlabs_api_key=ENV_KEY))
+    assert await keys.resolve_api_key("elevenlabs") == ENV_KEY

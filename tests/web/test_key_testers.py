@@ -14,6 +14,7 @@ from ai_newsdesk.web.keys import (
     check_anthropic_key,
     check_typesafe_key,
     default_key_testers,
+    elevenlabs_key_checker,
     openai_key_checker,
     openrouter_key_checker,
     research_engine_checker,
@@ -146,6 +147,29 @@ async def test_bearer_key_testers(label: str, url: str, make: Any) -> None:
         route.mock(side_effect=httpx.ConnectError(f"refused {key}"))
         message = await check(key, RuntimeSettings())
         assert message == f"Could not reach {label} (ConnectError)."
+
+
+@respx.mock
+async def test_elevenlabs_key_tester() -> None:
+    key = "xi-test-" + "z" * 40
+    url = "https://api.elevenlabs.io/v1/user/subscription"
+    route = respx.get(url).mock(return_value=httpx.Response(200, json={}))
+    async with httpx.AsyncClient() as http:
+        check = elevenlabs_key_checker(http)
+        assert await check(key, RuntimeSettings()) is None
+        request = route.calls.last.request
+        assert request.headers["xi-api-key"] == key
+        assert "Authorization" not in request.headers
+        assert request.method == "GET"
+        route.mock(return_value=httpx.Response(401, json={"detail": f"bad {key}"}))
+        message = await check(key, RuntimeSettings())
+        assert message == "ElevenLabs rejected the key (401)." and key not in message
+        route.mock(return_value=httpx.Response(500, text=f"oops {key}"))
+        message = await check(key, RuntimeSettings())
+        assert message == "ElevenLabs answered 500." and key not in message
+        route.mock(side_effect=httpx.ConnectError(f"refused {key}"))
+        message = await check(key, RuntimeSettings())
+        assert message == "Could not reach ElevenLabs (ConnectError)."
 
 
 def test_default_testers_cover_every_key() -> None:

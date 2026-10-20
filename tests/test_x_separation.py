@@ -104,7 +104,7 @@ async def test_migration_detaches_x_items_and_drops_emptied_stories(
               (103, 1, 'u103', 'u103', 'news2', 't', 'reviewed', 6, 12);
             """
         )
-        assert await apply_migrations(conn) == [2, 3, 4, 5]
+        assert await apply_migrations(conn) == [2, 3, 4, 5, 6]
         async with conn.execute("SELECT id, story_id FROM items ORDER BY id") as cur:
             assert [tuple(r) for r in await cur.fetchall()] == [
                 (100, None),

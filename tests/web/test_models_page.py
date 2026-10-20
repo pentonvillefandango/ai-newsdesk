@@ -845,3 +845,33 @@ def test_the_schedule_step_with_the_scheduler_on() -> None:
     off = flow_steps(RuntimeSettings(runs_per_day=6), PRICES, scheduler_on=False)[0]
     assert (on.when, off.when) == ("6 times a day", "Scheduler off")
     assert "Refresh now" in on.text and "Refresh now" in off.text
+
+
+# ---- the Read aloud step (feedback-3) ----------------------------------------------------------
+
+
+def test_the_diagram_has_a_read_aloud_step_after_the_briefing(
+    app: FastAPI, client: TestClient
+) -> None:
+    diagram = _diagram(client.get("/models").text)
+    keys = re.findall(r'id="flow-([a-z]+)"', diagram)
+    assert len(keys) == 12 and keys.index("audio") == keys.index("briefing") + 1
+    step = _step(diagram, "audio")
+    assert "Read aloud" in step and "ElevenLabs · Daniel · eleven_v4" in step
+    assert 'class="flow__step flow__step--tool"' in step  # its own character meter, not USD
+
+
+def test_the_read_aloud_step_follows_the_settings(app: FastAPI, client: TestClient) -> None:
+    run(
+        client,
+        update_runtime_settings,
+        app.state.store,
+        narration_voice_id="zed1",
+        narration_model="eleven_flash_v2_5",
+    )
+    assert "ElevenLabs · zed1 · eleven_flash_v2_5" in _step(
+        _diagram(client.get("/models").text), "audio"
+    )
+    run(client, update_runtime_settings, app.state.store, narration_enabled=False)
+    step = _step(_diagram(client.get("/models").text), "audio")
+    assert "Off" in step and "eleven_flash" not in step
