@@ -15,7 +15,14 @@ from ai_newsdesk.llm.anthropic_client import AnthropicClient
 from ai_newsdesk.llm.prices import PriceBook
 from ai_newsdesk.models import BriefingStory, Category, Purpose, WriteInput
 from ai_newsdesk.pricing import Pricing
-from ai_newsdesk.writer import WRITER_SYSTEM, BriefingDoc, LLMWriter, StoryBatch, StoryWriting
+from ai_newsdesk.writer import (
+    BRIEFING_MAX_TOKENS,
+    WRITER_SYSTEM,
+    BriefingDoc,
+    LLMWriter,
+    StoryBatch,
+    StoryWriting,
+)
 from tests.fake_anthropic import FakeAnthropic, as_client, rate_limited, reply
 
 PRICING = Pricing.load(Path(__file__).resolve().parents[1] / "config" / "pricing.yaml")
@@ -121,6 +128,7 @@ async def test_write_briefing_uses_briefing_model_and_cleans_links() -> None:
     assert call["model"] == "claude-sonnet-5-5"
     assert call["output_format"] is BriefingDoc
     assert call["output_config"] == {"effort": "medium"}
+    assert call["max_tokens"] == BRIEFING_MAX_TOKENS
     assert call["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert call["system"][0]["text"] == BRIEFING_SYSTEM
     assert "Wednesday 14 October 2026" in call["messages"][0]["content"]
@@ -137,6 +145,13 @@ async def test_write_briefing_failures_return_none() -> None:
     assert (await writer.write_briefing(stories, "x"))[0] is None
     assert await writer.write_briefing(stories, "x") == (None, [])
     assert await writer.write_briefing([], "x") == (None, [])
+
+
+def test_briefing_leaves_room_for_thinking() -> None:
+    # Medium effort thinks first, and thinking counts against max_tokens: on 2026-10-20 Haiku
+    # spent 2,164 of 4,000 tokens thinking, the JSON was cut off and 35 of 37 briefings failed.
+    assert BRIEFING_MAX_TOKENS >= 16000
+    assert writer_for(FakeAnthropic([])).briefing_max_tokens == BRIEFING_MAX_TOKENS
 
 
 def test_worst_case_costs() -> None:
@@ -167,12 +182,12 @@ def test_worst_case_stories_is_an_absolute_upper_bound() -> None:
 
 
 def test_worst_case_briefing_is_an_absolute_upper_bound() -> None:
-    # Sonnet: $2.00/Mtok in (cache write 1.25x = $2.50), $10.00/Mtok out, max_tokens 4000.
+    # Sonnet: $2.00/Mtok in (cache write 1.25x = $2.50), $10.00/Mtok out, BRIEFING_MAX_TOKENS.
     writer = writer_for(FakeAnthropic([]), briefing_model="claude-sonnet-5-5")
     stories = [bs(1, "https://example.com/é")]
     sent = BRIEFING_SYSTEM + render_briefing_request(stories, "Wednesday 14 October 2026")
     min_bytes = len(sent.encode("utf-8")) + SCHEMA_OVERHEAD_TOKENS
-    floor = min_bytes * 2.50 / 1e6 + 4000 * 10.00 / 1e6
+    floor = min_bytes * 2.50 / 1e6 + BRIEFING_MAX_TOKENS * 10.00 / 1e6
     got = writer.worst_case_cost_briefing(stories)
     assert got >= floor
     assert got == pytest.approx(floor, abs=1e-3)
