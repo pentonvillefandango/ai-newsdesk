@@ -63,10 +63,14 @@ The owner listens to the daily briefing in the office, on a MacBook, as an overv
 
 ```python
 class Narrator(Protocol):
-    async def narrate(self, text: str, *, voice_id: str, model_id: str) -> NarrationResult: ...  # never raises
+    async def narrate(self, text_chunks: list[str], *, voice_id: str, model_id: str,
+                      credit_factor: float) -> NarrationResult: ...  # never raises
     async def voices(self) -> list[VoiceInfo] | None: ...  # None on failure
+    async def model_factors(self) -> dict[str, float] | None: ...  # None on failure
     async def quota(self) -> QuotaInfo | None: ...  # None on failure
 ```
+
+The plan (`docs/plans/2026-10-20-briefing-audio.md`, Task 4) gives the exact field lists.
 
 - **`NarrationResult`** has:
   - `audio: bytes | None`;
