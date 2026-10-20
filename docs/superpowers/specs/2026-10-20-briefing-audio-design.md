@@ -1,5 +1,7 @@
 # Briefing read aloud (ElevenLabs) and a "briefing failed" note (design)
 
+> **Amended after approval** (feedback-4 and feedback-5): on-demand audio, a random voice, speeds 1× to 1.5× starting at 1.25×, Lily as default, and a meter that records ElevenLabs' own count. ADR-0003's Amendments and `docs/OPERATIONS.md` describe the current behaviour; this spec is kept as approved.
+
 Date: 2026-10-20. Status: design approved by the owner in chat. Decisions: the whole briefing, audio ready after the scheduled briefing, sources dropped, three suggested voices plus a full voice dropdown, the failure note first.
 
 ## 1. Goal
