@@ -302,7 +302,8 @@ class NarrateCall:
 
 class FakeNarrator:
     """A scripted Narrator: `result` for every narrate call (after the optional `during` hook,
-    which lets a test change the world mid-call); `voices_result`/`factors_result` as given."""
+    which lets a test change the world mid-call); `voices_result`/`factors_result` as given;
+    `quota_results` answers the quota calls in order (then None)."""
 
     def __init__(
         self,
@@ -311,8 +312,10 @@ class FakeNarrator:
         voices_result: list[VoiceInfo] | None = None,
         factors_result: dict[str, float] | None = None,
         during: Callable[[], Awaitable[None]] | None = None,
+        quota_results: list[QuotaInfo | None] | None = None,
     ) -> None:
         self.result = result or NarrationResult(audio=b"ID3-fake-mp3", characters_billed=100)
+        self.quota_results = list(quota_results or [])
         self.voices_result = voices_result
         self.factors_result = factors_result
         self.during = during
@@ -333,4 +336,4 @@ class FakeNarrator:
         return self.factors_result
 
     async def quota(self) -> QuotaInfo | None:
-        return None
+        return self.quota_results.pop(0) if self.quota_results else None

@@ -35,6 +35,26 @@ def test_speech_text(body: str, want: str) -> None:
     assert speech_text(body, LABEL) == HEAD + want
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        f"{LABEL} brought news on chips.\n\nMore.",
+        f"{LABEL}: a quiet day.",
+        f"## {LABEL}\n\nA quiet day.",
+    ],
+)
+def test_the_date_is_said_once_when_the_briefing_opens_with_it(body: str) -> None:
+    # Live on 2026-10-20: "AI Newsdesk briefing for Tuesday 20 October 2026. Tuesday 20 October
+    # 2026 brought news..." (feedback-4).
+    spoken = speech_text(body, LABEL)
+    assert spoken.startswith("AI Newsdesk briefing.\n\n")
+    assert spoken.count(LABEL) == 1
+
+
+def test_a_date_later_in_the_briefing_keeps_the_dated_intro() -> None:
+    assert speech_text(f"Quiet day.\n\nAs of {LABEL}, nothing.", LABEL).startswith(HEAD)
+
+
 def test_chunks_fit_in_one() -> None:
     assert chunks("short text") == ["short text"]
 

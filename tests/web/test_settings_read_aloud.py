@@ -340,6 +340,47 @@ def test_sample_content_type_falls_back_to_mpeg(app: FastAPI, client: TestClient
     assert client.get("/settings/voice-sample/zed1").headers["content-type"] == "audio/mpeg"
 
 
+@pytest.mark.parametrize("head", [b"ID3\x04\x00", b"\xff\xfb\x90\x64", b"\xff\xf3\x40\xc4"])
+@pytest.mark.parametrize("kind", ["text/plain", "application/octet-stream", "binary/octet-stream"])
+def test_an_mp3_labelled_as_text_or_bytes_still_plays(
+    app: FastAPI, client: TestClient, head: bytes, kind: str
+) -> None:
+    # Live on 2026-10-20 Google's bucket served Lily's and Matilda's previews as text/plain, so
+    # every sample but Daniel's was a 502 (feedback-4).
+    _seed(client, app)
+    body = head + b"rest-of-mp3"
+    _mock(
+        app,
+        httpx.MockTransport(
+            lambda req: httpx.Response(200, content=body, headers={"content-type": kind})
+        ),
+    )
+    r = client.get("/settings/voice-sample/zed1")
+    assert r.status_code == 200 and r.content == body
+    assert r.headers["content-type"] == "audio/mpeg"
+
+
+@pytest.mark.parametrize(
+    ("kind", "body"),
+    [
+        ("text/plain", b"<Error>NoSuchKey</Error>"),
+        ("text/html", b"ID3 but html"),
+        ("text/plain", b""),
+    ],
+)
+def test_text_that_is_not_an_mp3_is_502(
+    app: FastAPI, client: TestClient, kind: str, body: bytes
+) -> None:
+    _seed(client, app)
+    _mock(
+        app,
+        httpx.MockTransport(
+            lambda req: httpx.Response(200, content=body, headers={"content-type": kind})
+        ),
+    )
+    assert client.get("/settings/voice-sample/zed1").status_code == 502
+
+
 def test_sample_unknown_or_previewless_voice_is_404(app: FastAPI, client: TestClient) -> None:
     _seed(client, app)
     seen = _mock(app)

@@ -41,14 +41,17 @@ def _speak_paragraph(paragraph: str) -> str:
 
 
 def speech_text(body: str, day_label: str) -> str:
-    paragraphs = [f"AI Newsdesk briefing for {day_label}."]
+    paragraphs: list[str] = []
     # A heading line is its own paragraph even with no blank line around it.
     body = _HEADING_LINE.sub(r"\n\n\1\n\n", body.replace("\r\n", "\n"))
     for raw in _BLANK_LINE.split(body):
         spoken = _speak_paragraph(raw)
         if spoken:
             paragraphs.append(spoken)
-    return "\n\n".join(paragraphs)
+    # The briefing usually opens with the date; then the intro leaves it out (feedback-4).
+    dated = bool(paragraphs) and day_label in paragraphs[0]
+    intro = "AI Newsdesk briefing." if dated else f"AI Newsdesk briefing for {day_label}."
+    return "\n\n".join([intro, *paragraphs])
 
 
 def _hard_cut(piece: str, limit: int) -> list[str]:

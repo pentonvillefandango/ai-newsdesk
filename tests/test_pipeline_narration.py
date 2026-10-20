@@ -13,7 +13,7 @@ import pytest
 from ai_newsdesk.audio_files import AudioFiles
 from ai_newsdesk.briefing import briefing_date_label
 from ai_newsdesk.clock import FixedClock
-from ai_newsdesk.models import NarrationResult, VoiceInfo
+from ai_newsdesk.models import NarrationResult, QuotaInfo, VoiceInfo
 from ai_newsdesk.narration import chunks, speech_text
 from ai_newsdesk.pipeline import NarrationOutcome, PipelineContext, prune_audio, run_narration
 from ai_newsdesk.runtime_settings import update_runtime_settings
@@ -24,7 +24,7 @@ from tests.pipeline_ctx import make_ctx
 
 DAY = date(2026, 10, 14)
 BODY = "## Labs\n\nA new model shipped [Lab](https://example.com/a).\n\nThat is all."
-DANIEL = "onwK4e9ZLuTAKqWW03F9"
+LILY = "pFZP5JQG7iQjIQuC4Bku"  # the default voice (feedback-4)
 
 
 async def _yes() -> bool:
@@ -78,10 +78,10 @@ async def test_done_writes_the_file_saves_the_row_and_records_usage(
     text = speech_text(BODY, briefing_date_label(DAY))
     [call] = narrator.calls
     assert call.text_chunks == chunks(text)
-    assert (call.voice_id, call.model_id, call.credit_factor) == (DANIEL, "eleven_v4", 1.0)
+    assert (call.voice_id, call.model_id, call.credit_factor) == (LILY, "eleven_v4", 1.0)
     rec = await store.get_briefing_audio(DAY)
     assert rec is not None
-    assert (rec.voice_id, rec.voice_name, rec.model_id) == (DANIEL, "Daniel", "eleven_v4")
+    assert (rec.voice_id, rec.voice_name, rec.model_id) == (LILY, "Lily", "eleven_v4")
     assert (rec.characters, rec.bytes, rec.created_at) == (77, 7, clock.now())
     assert _files(tmp_path) == {rec.file}
     assert ctx.audio is not None
@@ -99,7 +99,7 @@ async def test_a_suggested_voice_is_named_before_the_voice_list_loads(
     ctx = _ctx(store, clock, tmp_path, FakeNarrator(), catalogue=catalogue)
     assert await run_narration(ctx, DAY) is NarrationOutcome.DONE
     rec = await store.get_briefing_audio(DAY)
-    assert rec is not None and rec.voice_name == "Daniel"
+    assert rec is not None and rec.voice_name == "Lily"
 
 
 async def test_the_catalogue_gives_the_voice_name_and_the_factor(
@@ -110,7 +110,7 @@ async def test_the_catalogue_gives_the_voice_name_and_the_factor(
     catalogue = ElevenLabsCatalogue(
         store,
         FakeNarrator(
-            voices_result=[VoiceInfo(voice_id=DANIEL, name="Daniel")],
+            voices_result=[VoiceInfo(voice_id=LILY, name="Lily")],
             factors_result={"eleven_flash_v2_5": 0.5},
         ),
     )
@@ -120,7 +120,7 @@ async def test_the_catalogue_gives_the_voice_name_and_the_factor(
     assert await run_narration(ctx, DAY) is NarrationOutcome.DONE
     assert narrator.calls[0].credit_factor == 0.5
     rec = await store.get_briefing_audio(DAY)
-    assert rec is not None and rec.voice_name == "Daniel"
+    assert rec is not None and rec.voice_name == "Lily"
 
 
 async def test_a_remake_deletes_the_old_file(
@@ -308,3 +308,42 @@ async def test_a_cancelled_narration_records_the_estimate_and_re_raises(
     size = len(speech_text(BODY, briefing_date_label(DAY)))
     assert await _usage(store) == [("eleven_v4", size, 0)]
     assert await store.get_briefing_audio(DAY) is None
+
+
+def _quota(count: int) -> QuotaInfo:
+    return QuotaInfo(tier="creator", character_count=count, character_limit=363_000)
+
+
+async def test_the_meter_records_what_elevenlabs_counted(
+    store: Store, clock: FixedClock, tmp_path: Path
+) -> None:
+    # Live on 2026-10-20, 5,402 characters sent were counted as 2,377 by ElevenLabs, twice.
+    await _brief(store, clock)
+    narrator = FakeNarrator(quota_results=[_quota(10_000), _quota(10_044)])
+    assert await run_narration(_ctx(store, clock, tmp_path, narrator), DAY) is (
+        NarrationOutcome.DONE
+    )
+    assert await _usage(store) == [("eleven_v4", 44, 1)]
+    rec = await store.get_briefing_audio(DAY)
+    assert rec is not None and rec.characters == 44
+
+
+@pytest.mark.parametrize(
+    "quotas",
+    [
+        [None, _quota(10_044)],  # no reading before
+        [_quota(10_000), None],  # no reading after
+        [_quota(10_000), _quota(10_000)],  # not counted yet
+        [_quota(10_000), _quota(10_101)],  # more than our estimate: someone else used it too
+        [_quota(10_000), _quota(50)],  # the month reset in between
+    ],
+)
+async def test_the_meter_keeps_its_estimate_without_a_sound_reading(
+    store: Store, clock: FixedClock, tmp_path: Path, quotas: list[QuotaInfo | None]
+) -> None:
+    await _brief(store, clock)
+    narrator = FakeNarrator(quota_results=quotas)  # billed 100 by default
+    assert await run_narration(_ctx(store, clock, tmp_path, narrator), DAY) is (
+        NarrationOutcome.DONE
+    )
+    assert await _usage(store) == [("eleven_v4", 100, 1)]

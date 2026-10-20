@@ -62,6 +62,7 @@ _REASONS = {
     "off": "Audio is off in Settings.",
     "no_key": "Add an ElevenLabs key in Settings to hear this briefing.",
     "making": "Making audio. This takes a minute or two; reload to listen.",
+    "remaking": "Making new audio. This takes a minute or two; reload to listen.",
     "busy": "A run is in progress; try again in a few minutes.",
     "over_cap": "This month's audio allowance is used up.",
     "failed_retry": "Audio failed; it will be retried.",
@@ -78,8 +79,10 @@ async def _listen(request: Request, briefing: BriefingRecord, audio_flag: str) -
     if record is not None:
         return {
             "audio": record,
+            # A new file per remake: the MP3 is cached for a day, so its URL must change.
+            "version": record.file.removesuffix(".mp3").rsplit("-", 1)[-1],
             "minutes": max(1, round(record.bytes / _AUDIO_BYTES_PER_SECOND / 60)),
-            "reason": None,
+            "reason": _REASONS["remaking"] if briefing.date in _in_flight(request.app) else None,
             "can_make": True,
         }
     rs = await load_runtime_settings(store)

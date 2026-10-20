@@ -50,7 +50,7 @@ class RuntimeSettings(BaseModel):
     hn_min_points: int = Field(default=100, ge=0)
     # Briefing read aloud (ElevenLabs).
     narration_enabled: bool = True
-    narration_voice_id: str = Field(default="onwK4e9ZLuTAKqWW03F9", min_length=1, max_length=64)
+    narration_voice_id: str = Field(default="pFZP5JQG7iQjIQuC4Bku", min_length=1, max_length=64)
     narration_model: str = Field(default="eleven_v4", min_length=1, max_length=64)
     narration_monthly_chars: int = Field(default=300_000, ge=0, le=10_000_000)
 
