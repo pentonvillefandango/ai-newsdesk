@@ -148,9 +148,17 @@ def test_reason_none_yet_and_making_and_busy(app: FastAPI, client: TestClient) -
     text = client.get("/briefing").text
     assert "No audio yet." in text
     assert "Make audio" in text
-    making = client.get("/briefing?audio=making").text
-    assert "Making audio. This takes a minute or two; reload to listen." in making
-    assert "Make audio" in making
+    # ?audio=making alone is not enough: "Making audio" shows only while the day's audio is
+    # being made (the day is in app.state.audio_in_flight), with or without the query.
+    assert "No audio yet." in client.get("/briefing?audio=making").text
+    app.state.audio_in_flight.add(DAY)
+    try:
+        for url in ("/briefing?audio=making", "/briefing", f"/briefing/{DAY}"):
+            making = client.get(url).text
+            assert "Making audio. This takes a minute or two; reload to listen." in making
+            assert "Make audio" in making
+    finally:
+        app.state.audio_in_flight.discard(DAY)
     busy = client.get(f"/briefing/{DAY}?audio=busy").text
     assert "A run is in progress; try again in a few minutes." in busy
     assert "Make audio" in busy
@@ -317,3 +325,83 @@ def test_make_audio_without_a_scheduler_is_503(app: FastAPI, client: TestClient)
     r = client.post(f"/briefing/{DAY}/audio", data={"csrf_token": csrf_token(client)})
     assert r.status_code == 503
     assert "No audio yet." in client.get("/briefing").text
+
+
+def test_making_ends_when_the_work_ends_and_the_failure_shows(
+    app: FastAPI, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While Make audio runs the day is in flight; afterwards a FAILED run shows its reason
+    even with ?audio=making still in the URL."""
+    _briefing(client, app)
+    seen: list[bool] = []
+    sched = app.state.scheduler
+
+    async def failing(ctx: object, day: date) -> NarrationOutcome:
+        seen.append(day in app.state.audio_in_flight)
+        sched._narration_try_day = DAY
+        sched._narration_last_outcome = NarrationOutcome.FAILED
+        sched._narration_tries = 1
+        return NarrationOutcome.FAILED
+
+    monkeypatch.setattr(pipeline, "run_narration", failing)
+    r = client.post(
+        f"/briefing/{DAY}/audio", data={"csrf_token": csrf_token(client)}, follow_redirects=False
+    )
+
+    async def drain() -> None:
+        await asyncio.gather(*app.state.background)
+
+    run(client, drain)
+    assert seen == [True]
+    assert DAY not in app.state.audio_in_flight
+    text = client.get(r.headers["location"]).text  # /briefing?audio=making
+    assert "Making audio" not in text
+    assert "Audio failed; it will be retried." in text
+
+
+def test_making_ends_after_a_raising_or_over_cap_run(
+    app: FastAPI, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _briefing(client, app)
+
+    async def boom(ctx: object, day: date) -> NarrationOutcome:
+        raise RuntimeError("tts down")
+
+    monkeypatch.setattr(pipeline, "run_narration", boom)
+    client.post(
+        f"/briefing/{DAY}/audio", data={"csrf_token": csrf_token(client)}, follow_redirects=False
+    )
+
+    async def drain() -> None:
+        await asyncio.gather(*app.state.background)
+
+    run(client, drain)
+    assert DAY not in app.state.audio_in_flight
+    assert "No audio yet." in client.get("/briefing?audio=making").text
+
+
+def test_write_now_marks_the_day_in_flight_while_it_works(
+    app: FastAPI, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[str] = []
+
+    async def fake_run_briefing(ctx: object, day: date) -> bool:
+        seen.append(f"brief {day in app.state.audio_in_flight}")
+        await app.state.store.save_briefing(day, "m", "Some news.", [], NOW)
+        return True
+
+    async def over_cap(ctx: object, day: date) -> NarrationOutcome:
+        seen.append(f"narrate {day in app.state.audio_in_flight}")
+        return NarrationOutcome.OVER_CAP
+
+    monkeypatch.setattr(pipeline, "run_briefing", fake_run_briefing)
+    monkeypatch.setattr(pipeline, "run_narration", over_cap)
+    client.post("/briefing/write", data={"csrf_token": csrf_token(client)}, follow_redirects=False)
+
+    async def drain() -> None:
+        await asyncio.gather(*app.state.background)
+
+    run(client, drain)
+    assert seen == ["brief True", "narrate True"]
+    assert DAY not in app.state.audio_in_flight
+    assert "Making audio" not in client.get("/briefing?audio=making").text

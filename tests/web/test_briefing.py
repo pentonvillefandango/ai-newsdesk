@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from ai_newsdesk import pipeline
 from ai_newsdesk.runtime_settings import update_runtime_settings
+from ai_newsdesk.store.records import BriefingAudioRecord
 from tests.web import seed
 from tests.web.support import NOW, csrf_token, run
 
@@ -401,3 +402,45 @@ def test_write_now_is_busy_while_the_lock_is_held(
 
 def test_write_now_needs_csrf(client: TestClient) -> None:
     assert client.post("/briefing/write").status_code == 403
+
+
+@pytest.mark.parametrize("has_audio", [False, True])
+def test_write_now_skips_writing_when_todays_briefing_already_exists(
+    app: FastAPI, client: TestClient, monkeypatch: pytest.MonkeyPatch, has_audio: bool
+) -> None:
+    """The scheduler (or an earlier click) wrote today's briefing before this task got the
+    lock: it is not written again (no second spend, the owner's copy is kept), and audio is
+    made only if the day has none."""
+    today = date(2026, 10, 14)
+    _briefing(client, app, today, "Already here.", [])
+    if has_audio:
+        run(
+            client,
+            app.state.store.save_briefing_audio,
+            BriefingAudioRecord(
+                date=today, voice_id="v1", voice_name="Daniel", model_id="eleven_v4",
+                characters=10, bytes=10, file="briefing-x.mp3", created_at=NOW,
+            ),
+        )  # fmt: skip
+    events: list[str] = []
+
+    async def fake_run_briefing(ctx: object, day: date) -> bool:
+        events.append("brief")
+        return True
+
+    async def fake_run_narration(ctx: object, day: date) -> pipeline.NarrationOutcome:
+        events.append("narrate")
+        return pipeline.NarrationOutcome.DONE
+
+    monkeypatch.setattr(pipeline, "run_briefing", fake_run_briefing)
+    monkeypatch.setattr(pipeline, "run_narration", fake_run_narration)
+    client.post("/briefing/write", data={"csrf_token": csrf_token(client)}, follow_redirects=False)
+
+    async def drain() -> None:
+        await asyncio.gather(*app.state.background)
+
+    run(client, drain)
+    assert events == ([] if has_audio else ["narrate"])
+    latest = run(client, app.state.store.get_briefing, today)
+    assert latest is not None and latest.body == "Already here."
+    assert not app.state.scheduler.lock.locked()

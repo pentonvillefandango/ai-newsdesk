@@ -129,6 +129,38 @@ async def test_existing_briefing_is_not_rewritten(store: Store) -> None:
     assert rec.briefings == []
 
 
+async def test_a_tick_waiting_behind_write_it_now_does_not_write_a_second_briefing(
+    store: Store,
+) -> None:
+    """Write it now holds the lock; a tick (no briefing yet) waits for it. When the manual
+    write finishes, the tick finds the briefing and writes nothing (no attempt counted)."""
+    now = datetime(2026, 10, 14, 9, 0, tzinfo=UTC)
+    day = date(2026, 10, 14)
+    rec = Recorder()
+    sched = scheduler_for(store, MutableClock(now), rec)
+    release = asyncio.Event()
+
+    async def write_it_now() -> None:
+        async with sched.lock:
+            await release.wait()
+            await store.save_briefing(day, "m", "manual body", [], now)
+
+    manual = asyncio.create_task(write_it_now())
+    await asyncio.sleep(0)
+    tick = asyncio.create_task(sched.tick())
+    await asyncio.sleep(0.05)
+    assert not tick.done()  # waiting for the lock
+    release.set()
+    await manual
+    await tick
+    assert rec.briefings == []
+    briefing = await store.get_briefing(day)
+    assert briefing is not None and briefing.body == "manual body"
+    assert sched.briefing_status(day).tries == 0
+    await sched.tick()
+    assert rec.briefings == []
+
+
 async def test_run_now_never_overlaps(store: Store) -> None:
     rec = Recorder()
     sched = scheduler_for(store, MutableClock(datetime(2026, 10, 14, 9, 0, tzinfo=UTC)), rec)

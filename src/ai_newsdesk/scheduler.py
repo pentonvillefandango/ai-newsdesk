@@ -213,20 +213,24 @@ class Scheduler:
     async def _maybe_brief(self, day: date, now: datetime) -> None:
         """Write `day`'s briefing. The day is done only when the job returns True (or a briefing
         already exists); otherwise retry every BRIEFING_RETRY_AFTER, at most
-        BRIEFING_MAX_ATTEMPTS times that day."""
+        BRIEFING_MAX_ATTEMPTS times that day. The check is made again under the lock: a
+        briefing written while this tick waited (Write it now) is never written twice."""
         if await self.ctx.store.get_briefing(day) is not None:
             self._briefing_day = day
             return
         if not self._may_try_briefing(day, now):
             return
-        self._briefing_tries += 1
-        self._briefing_last_try = now
-        try:
-            async with self.lock:
+        async with self.lock:
+            if await self.ctx.store.get_briefing(day) is not None:
+                self._briefing_day = day  # written while we waited: not an attempt
+                return
+            self._briefing_tries += 1
+            self._briefing_last_try = now
+            try:
                 ok = await self._briefing_fn(self.ctx, day)
-        except Exception:  # retried on a later tick, like a False result
-            log.exception("briefing for %s failed", day.isoformat())
-            ok = False
+            except Exception:  # retried on a later tick, like a False result
+                log.exception("briefing for %s failed", day.isoformat())
+                ok = False
         if ok:
             self._briefing_day = day
         else:

@@ -268,6 +268,7 @@ def create_app(
         scheduler: Scheduler | None = None
         background: set[asyncio.Task[None]] = set()
         app.state.background = background
+        app.state.audio_in_flight = set()  # days whose audio a web background task is making
         try:
             await store.seed_sources_if_empty(config_dir / "sources.yaml")
             pricing = Pricing.load(config_dir / "pricing.yaml")

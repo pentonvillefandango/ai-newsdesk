@@ -90,8 +90,10 @@ async def _listen(request: Request, briefing: BriefingRecord, audio_flag: str) -
         key = "off"
     elif ctx.has_narration_key is not None and not await ctx.has_narration_key():
         key = "no_key"
-    elif audio_flag in ("making", "busy"):
-        key = audio_flag
+    elif briefing.date in _in_flight(request.app):
+        key = "making"
+    elif audio_flag == "busy":
+        key = "busy"
     elif (status is not None and status.last_outcome == NarrationOutcome.OVER_CAP) or (
         await store.month_tts_characters(ctx.clock.now(), ctx.settings.tz)
         >= rs.narration_monthly_chars
@@ -157,27 +159,44 @@ async def latest_briefing(request: Request, writing: str = "", audio: str = "") 
     )
 
 
+def _in_flight(app: FastAPI) -> set[date]:
+    """Days whose audio a web background task (Write it now, Make audio) is making now."""
+    days: set[date] | None = getattr(app.state, "audio_in_flight", None)
+    if days is None:
+        days = app.state.audio_in_flight = set()
+    return days
+
+
 async def _write_briefing_now(app: FastAPI) -> None:
     """Write today's briefing under the scheduler lock, then make its audio under the lock
-    again (released in between, so a waiting job is not held up twice). Logs and swallows
-    any failure."""
+    again (released in between, so a waiting job is not held up twice). If today's briefing
+    exists by the time the lock is held (the scheduler wrote it), it is not written again;
+    its audio is still made if it has none. Logs and swallows any failure."""
+    ctx = app.state.ctx
+    today = ctx.clock.now().astimezone(ZoneInfo(ctx.settings.tz)).date()
+    in_flight = _in_flight(app)
+    in_flight.add(today)
     try:
-        ctx = app.state.ctx
-        today = ctx.clock.now().astimezone(ZoneInfo(ctx.settings.tz)).date()
-        async with app.state.scheduler.lock:
-            written = await pipeline.run_briefing(ctx, today)
-        if not written:
-            log.warning("manual briefing for %s was not written", today.isoformat())
+        try:
+            async with app.state.scheduler.lock:
+                if await ctx.store.get_briefing(today) is not None:
+                    log.info("today's briefing already exists; not written again")
+                    if await ctx.store.get_briefing_audio(today) is not None:
+                        return
+                elif not await pipeline.run_briefing(ctx, today):
+                    log.warning("manual briefing for %s was not written", today.isoformat())
+                    return
+        except Exception:
+            log.exception("manual briefing failed")
             return
-    except Exception:
-        log.exception("manual briefing failed")
-        return
-    try:
-        async with app.state.scheduler.lock:
-            outcome = await pipeline.run_narration(ctx, today)
-        log.info("audio for the manual %s briefing: %s", today.isoformat(), outcome.value)
-    except Exception:
-        log.exception("audio for the manual briefing failed")
+        try:
+            async with app.state.scheduler.lock:
+                outcome = await pipeline.run_narration(ctx, today)
+            log.info("audio for the manual %s briefing: %s", today.isoformat(), outcome.value)
+        except Exception:
+            log.exception("audio for the manual briefing failed")
+    finally:
+        in_flight.discard(today)
 
 
 @router.post("/briefing/write")
@@ -222,13 +241,18 @@ async def briefing_audio(request: Request, day: str) -> Response:
 
 
 async def _make_audio(app: FastAPI, day: date) -> None:
-    """Make (or remake) the day's audio under the scheduler lock. Logs and swallows failure."""
+    """Make (or remake) the day's audio under the scheduler lock. Logs and swallows failure.
+    The day is in flight (the page says "Making audio") until the work ends."""
+    in_flight = _in_flight(app)
+    in_flight.add(day)
     try:
         async with app.state.scheduler.lock:
             outcome = await pipeline.run_narration(app.state.ctx, day)
         log.info("audio for %s: %s", day.isoformat(), outcome.value)
     except Exception:
         log.exception("making audio for %s failed", day.isoformat())
+    finally:
+        in_flight.discard(day)
 
 
 @router.post("/briefing/{day}/audio")
