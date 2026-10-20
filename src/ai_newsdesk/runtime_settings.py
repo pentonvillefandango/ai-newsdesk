@@ -18,7 +18,9 @@ log = logging.getLogger(__name__)
 
 RUNS_PER_DAY_CHOICES = (1, 2, 4, 6, 12, 24)
 DEFAULT_MODEL = "claude-haiku-5-5"
-ApiKeyName = Literal["anthropic", "research_engine", "typesafe", "openai", "openrouter"]
+ApiKeyName = Literal[
+    "anthropic", "research_engine", "typesafe", "openai", "openrouter", "elevenlabs"
+]
 # Who can do each AI job: the judge alone may also be Jev (TypeSafe).
 ModelProvider = Literal["anthropic", "openai", "openrouter"]
 JudgeProvider = Literal["anthropic", "typesafe", "openai", "openrouter"]
@@ -46,6 +48,11 @@ class RuntimeSettings(BaseModel):
     show_threshold: int = Field(default=4, ge=0, le=10)
     why_it_matters: bool = True
     hn_min_points: int = Field(default=100, ge=0)
+    # Briefing read aloud (ElevenLabs).
+    narration_enabled: bool = True
+    narration_voice_id: str = Field(default="onwK4e9ZLuTAKqWW03F9", min_length=1, max_length=64)
+    narration_model: str = Field(default="eleven_v4", min_length=1, max_length=64)
+    narration_monthly_chars: int = Field(default=300_000, ge=0, le=10_000_000)
 
     def _jobs(self) -> list[tuple[str, str]]:
         """(provider, model) per AI job, writer first."""

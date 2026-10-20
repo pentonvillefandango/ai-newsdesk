@@ -137,7 +137,7 @@ sed -i "s/^SESSION_SECRET=.*/SESSION_SECRET=$(openssl rand -hex 32)/" .env && ma
 
 - `SESSION_SECRET`: everyone is logged out.
 - `SECRETS_KEY`: it encrypts the API keys saved on the Settings page. After rotating it those saved keys can't be decrypted: the app falls back to the `.env` keys, and you re-enter the keys on the Settings page.
-- API keys (`ANTHROPIC_API_KEY`, `RESEARCH_ENGINE_API_KEY`, `TYPESAFE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`): change them in `.env` and `make deploy`, or save them on the Settings page (a saved key wins over `.env`).
+- API keys (`ANTHROPIC_API_KEY`, `RESEARCH_ENGINE_API_KEY`, `TYPESAFE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ELEVENLABS_API_KEY`): change them in `.env` and `make deploy`, or save them on the Settings page (a saved key wins over `.env`).
 
 Never print or commit `.env`. Check values by length only, e.g. `v="$(grep -m1 '^SECRETS_KEY=' .env | cut -d= -f2-)"; echo "${#v}"; v=`.
 

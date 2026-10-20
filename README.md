@@ -50,6 +50,7 @@ All settings come from `.env` (copy `.env.example`; mode 600; never commit it). 
 | `TYPESAFE_API_KEY` | empty (secret) | Only for the optional Jev judge. |
 | `OPENAI_API_KEY` | empty (secret) | Fallback OpenAI key, only for jobs set to OpenAI. |
 | `OPENROUTER_API_KEY` | empty (secret) | Fallback OpenRouter key, only for jobs set to OpenRouter. |
+| `ELEVENLABS_API_KEY` | empty (secret) | Fallback ElevenLabs key, only for reading the briefing aloud. |
 | `RESEARCH_ENGINE_URL` | `http://research-engine-app:8000` | research-engine over the shared `proxy` network. |
 | `DB_PATH` | `data/ai-newsdesk.sqlite` | SQLite file for local runs. Compose fixes it to `/data/ai-newsdesk.sqlite` on the `app-data` volume. |
 | `TZ` | `Europe/London` | Time zone for schedules and the budget month. |

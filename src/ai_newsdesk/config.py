@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     typesafe_api_key: str = Field(default="", repr=False)
     openai_api_key: str = Field(default="", repr=False)
     openrouter_api_key: str = Field(default="", repr=False)
+    elevenlabs_api_key: str = Field(default="", repr=False)
     research_engine_url: str = "http://research-engine-app:8000"
     db_path: str = "data/ai-newsdesk.sqlite"
     tz: str = "Europe/London"

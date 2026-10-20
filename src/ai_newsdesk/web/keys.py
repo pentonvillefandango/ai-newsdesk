@@ -24,6 +24,7 @@ KEY_LABELS: dict[ApiKeyName, str] = {
     "typesafe": "TypeSafe",
     "openai": "OpenAI",
     "openrouter": "OpenRouter",
+    "elevenlabs": "ElevenLabs",
 }
 KeyTester = Callable[[str, RuntimeSettings], Awaitable[str | None]]
 TEST_TIMEOUT_S = 15.0
@@ -89,6 +90,7 @@ def research_engine_checker(base_url: str, http: httpx.AsyncClient) -> KeyTester
 
 OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
 OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
+ELEVENLABS_SUBSCRIPTION_URL = "https://api.elevenlabs.io/v1/user/subscription"
 
 
 def bearer_checker(label: str, url: str, http: httpx.AsyncClient) -> KeyTester:
@@ -123,6 +125,26 @@ def openrouter_key_checker(http: httpx.AsyncClient) -> KeyTester:
     return bearer_checker("OpenRouter", OPENROUTER_KEY_URL, http)
 
 
+def elevenlabs_key_checker(http: httpx.AsyncClient) -> KeyTester:
+    """The subscription lookup is free and needs the key (sent as `xi-api-key`). Messages never
+    quote the provider's body or the exception text."""
+
+    async def check(key: str, runtime: RuntimeSettings) -> str | None:
+        try:
+            response = await http.get(
+                ELEVENLABS_SUBSCRIPTION_URL, headers={"xi-api-key": key}, timeout=TEST_TIMEOUT_S
+            )
+        except httpx.HTTPError as exc:
+            return f"Could not reach ElevenLabs ({type(exc).__name__})."
+        if response.status_code == 401:
+            return "ElevenLabs rejected the key (401)."
+        if response.status_code != 200:
+            return f"ElevenLabs answered {response.status_code}."
+        return None
+
+    return check
+
+
 async def check_typesafe_key(key: str, runtime: RuntimeSettings) -> str | None:
     """One single-question Noul request (optional `jev` extra)."""
     try:
@@ -147,4 +169,5 @@ def default_key_testers(settings: Settings, http: httpx.AsyncClient) -> dict[Api
         "typesafe": check_typesafe_key,
         "openai": openai_key_checker(http),
         "openrouter": openrouter_key_checker(http),
+        "elevenlabs": elevenlabs_key_checker(http),
     }
