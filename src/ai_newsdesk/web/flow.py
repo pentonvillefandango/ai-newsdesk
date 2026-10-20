@@ -88,8 +88,24 @@ def _judge_text(rs: RuntimeSettings) -> str:
     )
 
 
+def _read_aloud(rs: RuntimeSettings, voice_name: str | None) -> FlowStep:
+    if rs.narration_enabled:
+        text = f"ElevenLabs · {voice_name or rs.narration_voice_id} · {rs.narration_model}"
+        detail = (
+            " Made after each briefing, counted in characters against its own monthly cap,"
+            " separate from the dollar budget."
+        )
+    else:
+        text, detail = "Off", " Switch it on in Settings."
+    return FlowStep("audio", "tool", "Read aloud", "After the briefing", f"{text}.{detail}")
+
+
 def flow_steps(
-    rs: RuntimeSettings, prices: PriceBook, *, scheduler_on: bool = True
+    rs: RuntimeSettings,
+    prices: PriceBook,
+    *,
+    scheduler_on: bool = True,
+    voice_name: str | None = None,
 ) -> list[FlowStep]:
     each_run = "Each run"
     nightly = f"Nightly, {NIGHTLY_AT:%H:%M}"
@@ -177,6 +193,7 @@ def flow_steps(
             " fails, it tries again every 30 minutes.",
             _model("briefing", "Briefing writer", rs.briefing_provider, rs.briefing_model, prices),
         ),
+        _read_aloud(rs, voice_name),
         FlowStep(
             "nightly",
             "tool",

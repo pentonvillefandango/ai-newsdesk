@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Settings on Newsdesk{% endblock %}
+{% block scripts %}<script src="/static/voice-sample.js" defer></script>{% endblock %}
 {% block content %}
 {% macro aria(name, hint=false) %}{% if hint or errors.get(name) %} aria-describedby="{% if hint %}{{ name }}-hint{% endif %}{% if hint and errors.get(name) %} {% endif %}{% if errors.get(name) %}{{ name }}-error{% endif %}"{% endif %}{% if errors.get(name) %} aria-invalid="true"{% endif %}{% endmacro %}
 {% macro error(name) %}{% if errors.get(name) %}<p class="field__error" id="{{ name }}-error">{{ errors[name] }}</p>{% endif %}{% endmacro %}
@@ -102,9 +103,72 @@
       </div>
     </section>
 
+    <section class="panel" id="read-aloud" aria-labelledby="read-aloud-title">
+      <div class="panel__head">
+        <h2 id="read-aloud-title">Read aloud</h2>
+        <p>After each briefing, ElevenLabs reads it out so it is ready to play. Needs an ElevenLabs key, below.</p>
+      </div>
+      <div class="panel__body">
+        <div class="check">
+          <input id="narration_enabled" name="narration_enabled" type="checkbox"{% if values.narration_enabled == "on" %} checked{% endif %}>
+          <div>
+            <label for="narration_enabled">Read the briefing aloud</label>
+          </div>
+        </div>
+        <div class="field">
+          <label for="narration_voice_id">Voice</label>
+          <div class="voice-pick">
+            <select id="narration_voice_id" name="narration_voice_id"{{ aria("narration_voice_id", true) }}>
+              {% if voice_odd %}
+              <option value="{{ voice_odd }}" selected>{{ voice_odd }}</option>
+              {% endif %}
+              <optgroup label="Suggested">
+                {% for vid, label in voices_suggested %}
+                <option value="{{ vid }}"{% if values.narration_voice_id == vid %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </optgroup>
+              {% if voices_all %}
+              <optgroup label="All voices on your account">
+                {% for vid, label in voices_all %}
+                <option value="{{ vid }}"{% if values.narration_voice_id == vid %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </optgroup>
+              {% endif %}
+            </select>
+            <button class="button button--quiet" type="button" id="voice-sample-play" disabled>Play sample</button>
+            <button class="button button--quiet" type="submit" form="voices-refresh-form">Refresh voices</button>
+          </div>
+          <audio id="voice-sample-audio" preload="none"></audio>
+          <p class="field__hint" id="narration_voice_id-hint">Samples are free and spend no characters. {% if has_tts_key %}Refresh voices fetches your account's list.{% else %}Add an ElevenLabs key to see your account's voices.{% endif %}</p>
+          {{ error("narration_voice_id") }}
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="narration_model">Model</label>
+            <select id="narration_model" name="narration_model"{{ aria("narration_model") }}>
+              {% for mid, label in narration_models %}
+              <option value="{{ mid }}"{% if values.narration_model == mid %} selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            {{ error("narration_model") }}
+          </div>
+          <div class="field">
+            <label for="narration_monthly_chars">Monthly character cap</label>
+            <input id="narration_monthly_chars" name="narration_monthly_chars" type="number" min="0" max="10000000" step="1" inputmode="numeric" value="{{ values.narration_monthly_chars }}" required{{ aria("narration_monthly_chars", true) }}>
+            <p class="field__hint" id="narration_monthly_chars-hint">Audio stops for the month at this many characters. Separate from the dollar budget.</p>
+            {{ error("narration_monthly_chars") }}
+          </div>
+        </div>
+        <p class="field__hint" id="read-aloud-usage">This month: {{ tts_chars }} of {{ tts_cap }} characters used.{% if tts_quota %} ElevenLabs says {{ tts_quota.character_limit - tts_quota.character_count }} of {{ tts_quota.character_limit }} left on your {{ tts_quota.tier }} plan.{% endif %}</p>
+      </div>
+    </section>
+
     <div class="form__actions">
       <button class="button" type="submit">Save settings</button>
     </div>
+  </form>
+  <form id="voices-refresh-form" method="post" action="/settings/voices/refresh">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   </form>
 
   <section class="panel" id="keys" aria-labelledby="keys-title">
