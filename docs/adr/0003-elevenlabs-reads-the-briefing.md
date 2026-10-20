@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-10-20). Source: the briefing audio design (`docs/superpowers/specs/2026-10-20-briefing-audio-design.md`), approved by the owner (feedback-3).
+Accepted (2026-10-20). Source: the briefing audio design (`docs/superpowers/specs/2026-10-20-briefing-audio-design.md`), approved by the owner (feedback-3). Amended the same day by feedback-4 and feedback-5; see **Amendments** below.
 
 ## Context
 
@@ -29,8 +29,13 @@ ElevenLabs bills in credits (characters times a model factor), not dollars, so t
 
 ## Consequences
 
-- At one briefing a day, about 165k of the 363,000 characters a month on Creator are used, well under the 300,000 cap; even the design's 217k estimate fits. Remaking audio by hand spends again.
+- At one briefing a day, about 75k of the 363,000 characters a month on Creator are used (ElevenLabs counted about 2,400 per 5,400-character briefing), well under the 300,000 cap. Remaking audio by hand spends again.
 - About 3 to 4 MB a day, about 100 MB at 30 days, on the `app-data` volume. Backups do not include audio; a restore leaves rows whose files are gone, and Make audio recreates them at a character cost.
 - A new key (`ELEVENLABS_API_KEY` or saved in Settings) and a switch to turn the whole feature off. Without a key or when off, nothing is sent and the *scheduler* takes no run lock for audio; Write it now and Make audio take it briefly (narration then finds it off or keyless and returns at once).
 - The meter can over-count after a timeout, so the cap may stop audio slightly early; raising the cap or waiting for the month to roll over fixes it.
 - Narrated text is built from the stored briefing, which is derived from untrusted news. It only ever goes to the voice API as text, never as instructions to us.
+
+## Amendments
+
+- **Feedback-4 (2026-10-20).** The meter records ElevenLabs' own counter delta (read before, and twice after, 5 seconds apart), falling back to the estimate, because a 5,402-character briefing was counted as 2,377. Google-hosted voice previews served as `text/plain` are sniffed as MP3. The MP3 URL carries a version, so a remake isn't hidden by the browser cache. The spoken intro drops the date when the briefing opens with it. The default voice is Lily.
+- **Feedback-5 (2026-10-20).** On-demand audio is now an owner-chosen option (`narration_on_demand`). Audio made after the briefing stays the default, and on demand only **Make audio** spends characters, so the "rejected" alternative above is available by choice. It still never spends when a page is merely opened. **Random (any voice)** picks from all the account's voices, never the previous recording's voice. The player has speeds from 1× to 1.5× and starts at 1.25×.
