@@ -50,6 +50,7 @@ from ai_newsdesk.protocols import Clock
 from ai_newsdesk.store.db import apply_migrations, connect
 from ai_newsdesk.store.records import (
     LABELS,
+    BriefingAudioRecord,
     BriefingRecord,
     CompareItem,
     CompareJob,
@@ -977,6 +978,9 @@ class Store:
     ) -> None:
         """Save the briefing for `date` (local date); a second save for that date replaces it."""
         async with self._tx() as conn:
+            # An upsert never fires ON DELETE CASCADE, so drop the stale audio row by hand.
+            # The MP3 stays on disk until the nightly orphan prune removes it.
+            await conn.execute("DELETE FROM briefing_audio WHERE date = ?", (date.isoformat(),))
             await conn.execute(
                 "INSERT INTO briefings (date, model, body, story_ids_json, created_at)"
                 " VALUES (?, ?, ?, ?, ?)"
@@ -1008,6 +1012,89 @@ class Store:
     async def briefing_dates(self) -> list[dt.date]:
         rows = await self._all("SELECT date FROM briefings ORDER BY date DESC")
         return [dt.date.fromisoformat(r["date"]) for r in rows]
+
+    # ---- briefing audio --------------------------------------------------------------
+
+    @staticmethod
+    def _audio(row: aiosqlite.Row) -> BriefingAudioRecord:
+        return BriefingAudioRecord(
+            date=dt.date.fromisoformat(row["date"]),
+            voice_id=row["voice_id"],
+            voice_name=row["voice_name"],
+            model_id=row["model_id"],
+            characters=row["characters"],
+            bytes=row["bytes"],
+            file=row["file"],
+            created_at=_req_dt(row["created_at"]),
+        )
+
+    async def save_briefing_audio(self, rec: BriefingAudioRecord) -> str | None:
+        """Upsert the day's audio row; return the previous file name (to delete) or None."""
+        day = rec.date.isoformat()
+        async with self._tx() as conn:
+            async with conn.execute(
+                "SELECT file FROM briefing_audio WHERE date = ?", (day,)
+            ) as cur:
+                old = await cur.fetchone()
+            await conn.execute(
+                "INSERT INTO briefing_audio (date, voice_id, voice_name, model_id, characters,"
+                " bytes, file, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (date) DO UPDATE SET voice_id = excluded.voice_id,"
+                " voice_name = excluded.voice_name, model_id = excluded.model_id,"
+                " characters = excluded.characters, bytes = excluded.bytes,"
+                " file = excluded.file, created_at = excluded.created_at",
+                (
+                    day,
+                    rec.voice_id,
+                    rec.voice_name,
+                    rec.model_id,
+                    rec.characters,
+                    rec.bytes,
+                    rec.file,
+                    _ts(rec.created_at),
+                ),
+            )
+        return old["file"] if old is not None else None
+
+    async def get_briefing_audio(self, date: dt.date) -> BriefingAudioRecord | None:
+        row = await self._one("SELECT * FROM briefing_audio WHERE date = ?", (date.isoformat(),))
+        return self._audio(row) if row is not None else None
+
+    async def delete_briefing_audio(self, date: dt.date) -> str | None:
+        """Delete the day's audio row; return its file name (to delete) or None."""
+        async with self._tx() as conn:
+            async with conn.execute(
+                "SELECT file FROM briefing_audio WHERE date = ?", (date.isoformat(),)
+            ) as cur:
+                old = await cur.fetchone()
+            await conn.execute("DELETE FROM briefing_audio WHERE date = ?", (date.isoformat(),))
+        return old["file"] if old is not None else None
+
+    async def audio_older_than(self, cutoff: dt.date) -> list[BriefingAudioRecord]:
+        """Audio rows for briefing days before `cutoff`, oldest first (the prune list)."""
+        rows = await self._all(
+            "SELECT * FROM briefing_audio WHERE date < ? ORDER BY date", (cutoff.isoformat(),)
+        )
+        return [self._audio(r) for r in rows]
+
+    async def record_tts_usage(
+        self, at: dt.datetime, date: dt.date, model_id: str, characters: int, *, ok: bool
+    ) -> None:
+        """Log billed (or maybe billed) characters; `ok` is False for a failed narration."""
+        async with self._tx() as conn:
+            await conn.execute(
+                "INSERT INTO tts_usage (at, date, model_id, characters, ok) VALUES (?, ?, ?, ?, ?)",
+                (_ts(at), date.isoformat(), model_id, characters, int(ok)),
+            )
+
+    async def month_tts_characters(self, now: dt.datetime, tz: str | dt.tzinfo) -> int:
+        """Characters billed in `now`'s calendar month, month boundaries in `tz`."""
+        start, end = _local_month_bounds(now, tz)
+        row = await self._one(
+            "SELECT COALESCE(SUM(characters), 0) FROM tts_usage WHERE at >= ? AND at < ?",
+            (_ts(start), _ts(end)),
+        )
+        return int(row[0]) if row is not None else 0
 
     # ---- spend -----------------------------------------------------------------------
 

@@ -33,6 +33,19 @@ class BriefingRecord(BaseModel):
     created_at: dt.datetime
 
 
+class BriefingAudioRecord(BaseModel):
+    """The read-aloud MP3 of one briefing day; `file` is a file name, never a path."""
+
+    date: dt.date
+    voice_id: str
+    voice_name: str
+    model_id: str
+    characters: int
+    bytes: int
+    file: str
+    created_at: dt.datetime
+
+
 class RunRecord(BaseModel):
     id: int
     trigger: str

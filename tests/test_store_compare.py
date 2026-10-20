@@ -32,7 +32,7 @@ MODELS = [
 async def test_migration_adds_the_compare_tables(db_path: str) -> None:
     conn = await connect(db_path)
     try:
-        assert await apply_migrations(conn) == [1, 2, 3, 4, 5]
+        assert await apply_migrations(conn) == [1, 2, 3, 4, 5, 6]
         assert await apply_migrations(conn) == []
         async with conn.execute("SELECT name FROM sqlite_master WHERE type='table'") as cur:
             names = {row[0] for row in await cur.fetchall()}

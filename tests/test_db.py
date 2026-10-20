@@ -28,7 +28,7 @@ async def test_connect_sets_pragmas_and_creates_parent(db_path: str) -> None:
 async def test_migrations_create_schema_once(db_path: str) -> None:
     conn = await connect(db_path)
     try:
-        assert await apply_migrations(conn) == [1, 2, 3, 4, 5]
+        assert await apply_migrations(conn) == [1, 2, 3, 4, 5, 6]
         assert await apply_migrations(conn) == []
         async with conn.execute("SELECT name FROM sqlite_master WHERE type='table'") as cur:
             names = {row[0] for row in await cur.fetchall()}
@@ -87,7 +87,7 @@ async def test_failing_migration_rolls_back(db_path: str, tmp_path: Path) -> Non
 
 
 def test_migration_files_are_numbered(tmp_path: Path) -> None:
-    assert [v for v, _ in migration_files()] == [1, 2, 3, 4, 5]
+    assert [v for v, _ in migration_files()] == [1, 2, 3, 4, 5, 6]
     (tmp_path / "1_bad.sql").write_text("")
     with pytest.raises(ValueError, match=r"NNNN_name\.sql"):
         migration_files(tmp_path)
