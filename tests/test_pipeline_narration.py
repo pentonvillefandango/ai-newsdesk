@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from ai_newsdesk import pipeline
 from ai_newsdesk.audio_files import AudioFiles
 from ai_newsdesk.briefing import briefing_date_label
 from ai_newsdesk.clock import FixedClock
@@ -25,6 +26,11 @@ from tests.pipeline_ctx import make_ctx
 DAY = date(2026, 10, 14)
 BODY = "## Labs\n\nA new model shipped [Lab](https://example.com/a).\n\nThat is all."
 LILY = "pFZP5JQG7iQjIQuC4Bku"  # the default voice (feedback-4)
+
+
+@pytest.fixture(autouse=True)
+def _no_settle_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pipeline, "COUNTER_SETTLE_S", 0.0)
 
 
 async def _yes() -> bool:
@@ -319,7 +325,8 @@ async def test_the_meter_records_what_elevenlabs_counted(
 ) -> None:
     # Live on 2026-10-20, 5,402 characters sent were counted as 2,377 by ElevenLabs, twice.
     await _brief(store, clock)
-    narrator = FakeNarrator(quota_results=[_quota(10_000), _quota(10_044)])
+    # Before, after, and again once settled: the two after-readings agree.
+    narrator = FakeNarrator(quota_results=[_quota(10_000), _quota(10_044), _quota(10_044)])
     assert await run_narration(_ctx(store, clock, tmp_path, narrator), DAY) is (
         NarrationOutcome.DONE
     )
@@ -331,11 +338,13 @@ async def test_the_meter_records_what_elevenlabs_counted(
 @pytest.mark.parametrize(
     "quotas",
     [
-        [None, _quota(10_044)],  # no reading before
-        [_quota(10_000), None],  # no reading after
-        [_quota(10_000), _quota(10_000)],  # not counted yet
-        [_quota(10_000), _quota(10_101)],  # more than our estimate: someone else used it too
-        [_quota(10_000), _quota(50)],  # the month reset in between
+        [None, _quota(10_044), _quota(10_044)],  # no reading before
+        [_quota(10_000), None, _quota(10_044)],  # no reading after
+        [_quota(10_000), _quota(10_044), None],  # no settled reading
+        [_quota(10_000), _quota(10_020), _quota(10_044)],  # still counting: it may lag
+        [_quota(10_000), _quota(10_000), _quota(10_000)],  # not counted yet
+        [_quota(10_000), _quota(10_101), _quota(10_101)],  # over our estimate: other use
+        [_quota(10_000), _quota(50), _quota(50)],  # the month reset in between
     ],
 )
 async def test_the_meter_keeps_its_estimate_without_a_sound_reading(
@@ -347,3 +356,19 @@ async def test_the_meter_keeps_its_estimate_without_a_sound_reading(
         NarrationOutcome.DONE
     )
     assert await _usage(store) == [("eleven_v4", 100, 1)]
+
+
+async def test_a_shutdown_while_reading_the_counter_records_the_estimate(
+    store: Store, clock: FixedClock, tmp_path: Path
+) -> None:
+    await _brief(store, clock)
+
+    class Cancelled(FakeNarrator):
+        async def quota(self) -> QuotaInfo | None:
+            if self.calls:  # after the narration
+                raise asyncio.CancelledError
+            return _quota(10_000)
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_narration(_ctx(store, clock, tmp_path, Cancelled()), DAY)
+    assert await _usage(store) == [("eleven_v4", 100, 0)]

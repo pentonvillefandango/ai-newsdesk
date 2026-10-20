@@ -25,8 +25,8 @@ SETTING_KEY = "elevenlabs_catalogue"
 STALE_AFTER = timedelta(hours=24)
 MAX_FACTOR = 10.0
 SUGGESTED_VOICES = (
+    ("pFZP5JQG7iQjIQuC4Bku", "Lily", "British, news and narration"),  # the default
     ("onwK4e9ZLuTAKqWW03F9", "Daniel", "British, steady broadcaster"),
-    ("pFZP5JQG7iQjIQuC4Bku", "Lily", "British, news and narration"),
     ("XrExE9yKIg1WjnnlVkGX", "Matilda", "American, professional"),
 )
 _SUGGESTED_NAMES = {vid: name for vid, name, _ in SUGGESTED_VOICES}
