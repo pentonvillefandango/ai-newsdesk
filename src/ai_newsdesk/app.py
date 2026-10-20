@@ -33,7 +33,7 @@ from ai_newsdesk.llm.shortlist import Shortlist
 from ai_newsdesk.normalise import canonical_url
 from ai_newsdesk.pipeline import PipelineContext
 from ai_newsdesk.pricing import Pricing
-from ai_newsdesk.protocols import Clock, Judge
+from ai_newsdesk.protocols import Clock, Judge, Narrator
 from ai_newsdesk.research_engine import HttpResearchEngine
 from ai_newsdesk.runtime_settings import (
     DEFAULT_MODEL,
@@ -66,6 +66,11 @@ class AppDeps:
     api_keys: ApiKeys
     prices: PriceBook  # (provider, model) prices; reads the live catalogue
     catalogue: ModelCatalogue
+    # Read aloud: built once, so every context shares one voice catalogue (a refresh reaches
+    # the live context whatever rebuilds meanwhile). The narrator reads the key per call, so
+    # a key saved later applies at once; without one, narration says NO_KEY.
+    narrator: Narrator
+    tts_catalogue: ElevenLabsCatalogue
 
 
 CtxFactory = Callable[[AppDeps], Awaitable[PipelineContext]]
@@ -125,11 +130,6 @@ async def build_context(deps: AppDeps) -> PipelineContext:
         )
     else:
         judge = LLMJudge(job_client("judge", runtime.judge_provider, runtime.judge_model))
-    # Read aloud: always built, so a key saved later applies at once (narration says NO_KEY
-    # until then). The key is read per call and never kept here.
-    narrator = ElevenLabsNarrator(deps.http, lambda: keys.resolve_api_key("elevenlabs"))
-    tts_catalogue = ElevenLabsCatalogue(store, narrator)
-    await tts_catalogue.load()
 
     async def has_narration_key() -> bool:
         return bool(await keys.resolve_api_key("elevenlabs"))
@@ -157,9 +157,9 @@ async def build_context(deps: AppDeps) -> PipelineContext:
                 cache_system=False,
             )
         ),
-        narrator=narrator,
+        narrator=deps.narrator,
         audio=AudioFiles(Path(settings.db_path).parent / "audio"),
-        tts_catalogue=tts_catalogue,
+        tts_catalogue=deps.tts_catalogue,
         has_narration_key=has_narration_key,
     )
 
@@ -279,6 +279,9 @@ def create_app(
             )
             await catalogue.load()
             prices = PriceBook(pricing, lambda: catalogue.current)
+            narrator = ElevenLabsNarrator(http, lambda: api_keys.resolve_api_key("elevenlabs"))
+            tts_catalogue = ElevenLabsCatalogue(store, narrator)
+            await tts_catalogue.load()
             deps = AppDeps(
                 settings=settings,
                 store=store,
@@ -288,6 +291,8 @@ def create_app(
                 api_keys=api_keys,
                 prices=prices,
                 catalogue=catalogue,
+                narrator=narrator,
+                tts_catalogue=tts_catalogue,
             )
             app.state.store = store
             app.state.pricing = pricing

@@ -1,11 +1,13 @@
 import asyncio
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from ai_newsdesk.clock import FixedClock
 from ai_newsdesk.pipeline import NarrationOutcome, PipelineContext, RunReport
+from ai_newsdesk.runtime_settings import update_runtime_settings
 from ai_newsdesk.scheduler import (
     NARRATION_MAX_ATTEMPTS,
     NARRATION_RETRY_AFTER,
@@ -354,9 +356,23 @@ async def test_briefing_status_reports_tries_and_give_up(store: Store) -> None:
     assert sched.briefing_status(day).tries == 6  # reading never resets the state
 
 
+def _audio_row(day: date, at: datetime) -> BriefingAudioRecord:
+    return BriefingAudioRecord(
+        date=day,
+        voice_id="v",
+        voice_name="V",
+        model_id="eleven_v4",
+        characters=1,
+        bytes=1,
+        file=f"briefing-{day.isoformat()}-aaaaaaaa.mp3",
+        created_at=at,
+    )
+
+
 class ScriptedNarration:
-    """Returns the scripted outcomes in order (an Exception is raised), then DONE. Records
-    whether the scheduler lock was held for each call."""
+    """Returns the scripted outcomes in order (an Exception is raised), then DONE; DONE saves
+    the day's audio row (and a briefing, when the fake briefing job left none), as the real
+    job does. Records whether the scheduler lock was held for each call."""
 
     def __init__(self, sched_lock: list[asyncio.Lock], *results: NarrationOutcome | Exception):
         self.results = list(results)
@@ -368,6 +384,10 @@ class ScriptedNarration:
         result = self.results.pop(0) if self.results else NarrationOutcome.DONE
         if isinstance(result, Exception):
             raise result
+        if result is NarrationOutcome.DONE:
+            if await ctx.store.get_briefing(day) is None:
+                await ctx.store.save_briefing(day, "m", "body", [], ctx.clock.now())
+            await ctx.store.save_briefing_audio(_audio_row(day, ctx.clock.now()))
         return result
 
 
@@ -497,18 +517,7 @@ async def test_a_narration_exception_is_a_failed_attempt_and_leaves_the_briefing
 async def test_existing_audio_means_no_narration(store: Store) -> None:
     clock = FixedClock(BRIEF_AT)
     await store.save_briefing(D, "m", "body", [], clock.now())
-    await store.save_briefing_audio(
-        BriefingAudioRecord(
-            date=D,
-            voice_id="v",
-            voice_name="V",
-            model_id="eleven_v4",
-            characters=1,
-            bytes=1,
-            file="briefing-2026-10-14-aaaaaaaa.mp3",
-            created_at=clock.now(),
-        )
-    )
+    await store.save_briefing_audio(_audio_row(D, clock.now()))
     sched, fn = narration_scheduler(store, clock)
     await _ticks(sched, clock, 3)
     assert fn.calls == []
@@ -533,3 +542,60 @@ async def test_a_held_lock_delays_narration_without_using_an_attempt(store: Stor
 def test_the_narration_retry_constants() -> None:
     assert NARRATION_MAX_ATTEMPTS == 3
     assert timedelta(minutes=30) == NARRATION_RETRY_AFTER
+
+
+async def test_audio_lost_to_a_rewrite_is_made_again(store: Store) -> None:
+    clock = FixedClock(BRIEF_AT)
+    sched, fn = narration_scheduler(store, clock)
+    await _ticks(sched, clock, 2)
+    assert len(fn.calls) == 1  # DONE: the row exists, so no more calls
+    await store.save_briefing(D, "m", "rewritten", [], clock.now())  # drops the audio row
+    await sched.tick()
+    assert len(fn.calls) == 2
+    assert await store.get_briefing_audio(D) is not None
+
+
+async def test_a_failed_remake_after_a_rewrite_gets_the_days_remaining_attempts(
+    store: Store,
+) -> None:
+    clock = FixedClock(BRIEF_AT)
+    failed = NarrationOutcome.FAILED
+    sched, fn = narration_scheduler(store, clock, failed, NarrationOutcome.DONE, failed, failed)
+    await _ticks(sched, clock, 2)  # 07:00 FAILED (1), 07:30 DONE
+    await store.save_briefing(D, "m", "rewritten", [], clock.now())
+    await _ticks(sched, clock, 6)  # FAILED (2), FAILED (3), then it gives up
+    assert len(fn.calls) == 4
+    assert sched.narration_status(D).gave_up is True
+
+
+class CountingLock(asyncio.Lock):
+    def __init__(self) -> None:
+        super().__init__()
+        self.acquired = 0
+
+    async def acquire(self) -> Literal[True]:
+        self.acquired += 1
+        return await super().acquire()
+
+
+async def _no_key() -> bool:
+    return False
+
+
+@pytest.mark.parametrize("why", ["off", "no_key"])
+async def test_no_lock_is_taken_when_narration_cannot_run(store: Store, why: str) -> None:
+    clock = FixedClock(BRIEF_AT)
+    await store.save_briefing(D, "m", "body", [], clock.now())  # no briefing job, no lock
+    sched, fn = narration_scheduler(store, clock)
+    if why == "off":
+        await update_runtime_settings(store, narration_enabled=False)
+    else:
+        sched.ctx.has_narration_key = _no_key
+    lock = CountingLock()
+    sched.lock = lock
+    await _ticks(sched, clock, 3, every_min=1)
+    assert lock.acquired == 0
+    assert fn.calls == []
+    expected = NarrationOutcome.OFF if why == "off" else NarrationOutcome.NO_KEY
+    st = sched.narration_status(D)
+    assert (st.tries, st.last_outcome) == (0, expected)

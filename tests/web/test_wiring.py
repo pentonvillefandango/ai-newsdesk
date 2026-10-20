@@ -261,3 +261,15 @@ def test_read_aloud_is_wired_and_says_no_key_without_one(tmp_path: Path) -> None
         assert ctx.has_narration_key is not None
         run(c, app.state.api_keys.set_api_key, "elevenlabs", "el-" + "k" * 30, NOW)
         assert run(c, ctx.has_narration_key) is True  # read per call: a saved key applies
+
+
+def test_one_voice_catalogue_outlives_context_rebuilds(tmp_path: Path) -> None:
+    """A nightly voice refresh on the shared catalogue reaches every later context too."""
+    app = _app(tmp_path)
+    with TestClient(app, base_url=BASE_URL) as c:
+        _settle(c, app)
+        first = app.state.ctx.tts_catalogue
+        assert first is app.state.deps.tts_catalogue
+        assert app.state.ctx.narrator is app.state.deps.narrator
+        run(c, app.state.rebuild_context)
+        assert app.state.ctx.tts_catalogue is first
