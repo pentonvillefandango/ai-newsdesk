@@ -264,9 +264,3 @@ class QuotaInfo(BaseModel):
     character_count: int
     character_limit: int
     resets_at: datetime | None = None
-
-
-class TtsModelInfo(BaseModel):
-    model_id: str
-    credit_factor: float = 1.0
-    max_chars: int | None = None

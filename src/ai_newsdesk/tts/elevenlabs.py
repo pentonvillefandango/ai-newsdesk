@@ -58,6 +58,10 @@ class ElevenLabsNarrator:
     ) -> NarrationResult:
         if not _VOICE_ID.match(voice_id):
             return NarrationResult(error="Invalid voice id.")
+        if not (math.isfinite(credit_factor) and credit_factor >= 0):
+            return NarrationResult(error="Invalid credit factor.")
+        if not text_chunks:
+            return NarrationResult(error="Nothing to narrate.")
         try:
             key = await self._key()
         except Exception as exc:  # the resolver must not break the never-raises contract
@@ -87,8 +91,9 @@ class ElevenLabsNarrator:
                     headers=headers,
                     json=body,
                     timeout=self._timeout,
+                    follow_redirects=False,
                 )
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
+            except Exception as exc:  # never raises: httpx errors, a closed client, anything
                 sent += len(chunk)
                 log.warning("ElevenLabs narration failed: %s", type(exc).__name__)
                 return NarrationResult(
@@ -124,6 +129,7 @@ class ElevenLabsNarrator:
                 params=params,
                 headers={"xi-api-key": key},
                 timeout=self._timeout,
+                follow_redirects=False,
             )
             if not resp.is_success:
                 log.warning("ElevenLabs GET %s answered %s", path, resp.status_code)
@@ -195,10 +201,15 @@ class ElevenLabsNarrator:
             sub = _Subscription.model_validate(data)
         except ValidationError:
             return None
-        reset = sub.next_character_count_reset_unix
+        resets_at: datetime | None = None
+        if sub.next_character_count_reset_unix:
+            try:
+                resets_at = datetime.fromtimestamp(sub.next_character_count_reset_unix, UTC)
+            except (OverflowError, ValueError, OSError):
+                resets_at = None
         return QuotaInfo(
             tier=sub.tier,
             character_count=sub.character_count,
             character_limit=sub.character_limit,
-            resets_at=datetime.fromtimestamp(reset, UTC) if reset else None,
+            resets_at=resets_at,
         )

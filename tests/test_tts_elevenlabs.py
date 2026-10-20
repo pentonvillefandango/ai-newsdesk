@@ -1,3 +1,4 @@
+import json
 import logging
 from collections.abc import Callable
 
@@ -46,14 +47,10 @@ async def test_single_chunk_success() -> None:
     assert req.url.params["output_format"] == "mp3_44100_64"
     assert req.headers["xi-api-key"] == KEY
     assert req.headers["accept"] == "audio/mpeg"
-    import json
-
     assert json.loads(req.content) == {"text": "hello", "model_id": "m1"}
 
 
 async def test_chunks_stitched_with_request_ids() -> None:
-    import json
-
     counter = iter(range(1, 10))
 
     def h(r: httpx.Request) -> httpx.Response:
@@ -73,8 +70,6 @@ async def test_chunks_stitched_with_request_ids() -> None:
 
 
 async def test_previous_text_when_no_request_id() -> None:
-    import json
-
     n, seen = _make(lambda r: httpx.Response(200, content=b"x"))
     long = "y" * 800
     res = await _narrate(n, [long, "next"])
@@ -250,3 +245,73 @@ async def test_quota_error_and_no_key() -> None:
     assert await n.quota() is None
     n2, seen = _make(lambda r: httpx.Response(200), key=_no_key)
     assert await n2.quota() is None and not seen
+
+
+async def test_decoding_error_is_maybe_billed() -> None:
+    def h(r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not gzip", headers={"content-encoding": "gzip"})
+
+    n, _ = _make(h)
+    res = await _narrate(n, ["abc"])
+    assert res.audio is None and res.maybe_billed and res.characters_billed == 3
+    assert res.error is not None and KEY not in res.error
+
+
+async def test_closed_client_does_not_raise() -> None:
+    n, _ = _make(lambda r: httpx.Response(200, content=b"x"))
+    await n._http.aclose()  # pyright: ignore[reportPrivateUsage]
+    res = await _narrate(n, ["abc"])
+    assert res.audio is None and res.error
+
+
+@pytest.mark.parametrize("factor", [float("nan"), float("inf"), -1.0])
+async def test_bad_credit_factor_no_request(factor: float) -> None:
+    n, seen = _make(lambda r: httpx.Response(200, content=b"x"))
+    res = await _narrate(n, ["abc"], factor)
+    assert res.error and res.audio is None and not seen
+
+
+async def test_empty_chunks_is_not_success() -> None:
+    n, seen = _make(lambda r: httpx.Response(200, content=b"x"))
+    res = await _narrate(n, [])
+    assert res.error == "Nothing to narrate." and res.audio is None and not seen
+
+
+async def test_quota_huge_reset_is_none_not_raise() -> None:
+    body = {
+        "tier": "t",
+        "character_count": 1,
+        "character_limit": 2,
+        "next_character_count_reset_unix": 10**20,
+    }
+    n, _ = _make(lambda r: httpx.Response(200, json=body))
+    q = await n.quota()
+    assert q is not None and q.resets_at is None
+
+
+async def test_redirect_not_followed_key_not_resent() -> None:
+    def h(r: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "https://evil.example/x"})
+
+    n, seen = _make(h)
+    res = await _narrate(n, ["a"])
+    assert res.audio is None and res.error
+    assert len(seen) == 1
+    n2, seen2 = _make(h)
+    assert await n2.quota() is None and len(seen2) == 1
+    assert await n2.voices() is None and len(seen2) == 2
+
+
+async def test_no_requests_after_failing_chunk() -> None:
+    n, seen = _make(lambda r: httpx.Response(500))
+    await _narrate(n, ["a", "b", "c"])
+    assert len(seen) == 1
+
+
+async def test_raising_key_resolver_gives_error() -> None:
+    async def boom() -> str:
+        raise RuntimeError(KEY)
+
+    n, seen = _make(lambda r: httpx.Response(200), key=boom)
+    res = await _narrate(n, ["a"])
+    assert res.error and KEY not in res.error and not seen
