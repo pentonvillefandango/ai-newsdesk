@@ -21,7 +21,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from collections.abc import Awaitable, Callable
+import random
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from enum import StrEnum
@@ -59,7 +60,12 @@ from ai_newsdesk.protocols import (
 from ai_newsdesk.runtime_settings import RuntimeSettings, load_runtime_settings
 from ai_newsdesk.store.records import BriefingAudioRecord
 from ai_newsdesk.store.store import Store
-from ai_newsdesk.tts.catalogue import ElevenLabsCatalogue, fallback_voice_name
+from ai_newsdesk.tts.catalogue import (
+    RANDOM_VOICE,
+    SUGGESTED_VOICES,
+    ElevenLabsCatalogue,
+    fallback_voice_name,
+)
 
 log = logging.getLogger(__name__)
 
@@ -111,6 +117,8 @@ class PipelineContext:
     tts_catalogue: ElevenLabsCatalogue | None = None  # None: suggested names or ids, factor 1.0
     # Whether an ElevenLabs key resolves; None leaves it to the narrator's own answer.
     has_narration_key: Callable[[], Awaitable[bool]] | None = None
+    # Picks the voice when the setting is "Random (any voice)" (feedback-5).
+    choose_voice: Callable[[Sequence[str]], str] = random.choice
 
 
 @dataclass
@@ -504,6 +512,19 @@ def _counted(before: int | None, after: int | None, estimate: int) -> int:
     return used if 0 < used <= estimate else estimate
 
 
+async def _voice_for(ctx: PipelineContext, day: date, setting: str) -> str:
+    """The setting's voice; for Random, any voice but the one that read the last recording."""
+    if setting != RANDOM_VOICE:
+        return setting
+    catalogue = ctx.tts_catalogue
+    ids = catalogue.voice_ids() if catalogue is not None else [v for v, _, _ in SUGGESTED_VOICES]
+    last = await ctx.store.get_briefing_audio(day) or await ctx.store.get_briefing_audio(
+        day - timedelta(days=1)
+    )
+    fresh = [vid for vid in ids if last is None or vid != last.voice_id]
+    return ctx.choose_voice(fresh or ids)
+
+
 async def run_narration(ctx: PipelineContext, day: date) -> NarrationOutcome:
     """Make (or remake) `day`'s briefing audio. The caller holds the scheduler lock.
 
@@ -523,6 +544,7 @@ async def run_narration(ctx: PipelineContext, day: date) -> NarrationOutcome:
     catalogue = ctx.tts_catalogue
     factor = catalogue.factor(rs.narration_model) if catalogue is not None else 1.0
     estimate = math.ceil(len(text) * factor)
+    voice_id = await _voice_for(ctx, day, rs.narration_voice_id)
     used = await ctx.store.month_tts_characters(ctx.clock.now(), ctx.settings.tz)
     if used + estimate > rs.narration_monthly_chars:
         log.warning(
@@ -538,7 +560,7 @@ async def run_narration(ctx: PipelineContext, day: date) -> NarrationOutcome:
     try:
         result = await narrator.narrate(
             chunks(text),
-            voice_id=rs.narration_voice_id,
+            voice_id=voice_id,
             model_id=rs.narration_model,
             credit_factor=factor,
         )
@@ -574,11 +596,11 @@ async def run_narration(ctx: PipelineContext, day: date) -> NarrationOutcome:
     old = await ctx.store.save_briefing_audio(
         BriefingAudioRecord(
             date=day,
-            voice_id=rs.narration_voice_id,
+            voice_id=voice_id,
             voice_name=(
-                catalogue.voice_name(rs.narration_voice_id)
+                catalogue.voice_name(voice_id)
                 if catalogue is not None
-                else fallback_voice_name(rs.narration_voice_id)
+                else fallback_voice_name(voice_id)
             ),
             model_id=rs.narration_model,
             characters=billed,

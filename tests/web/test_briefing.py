@@ -444,3 +444,28 @@ def test_write_now_skips_writing_when_todays_briefing_already_exists(
     latest = run(client, app.state.store.get_briefing, today)
     assert latest is not None and latest.body == "Already here."
     assert not app.state.scheduler.lock.locked()
+
+
+def test_write_now_on_demand_writes_but_makes_no_audio(
+    app: FastAPI, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(client, update_runtime_settings, app.state.store, narration_on_demand=True)
+    events: list[str] = []
+
+    async def fake_run_briefing(ctx: object, day: date) -> bool:
+        events.append("brief")
+        return True
+
+    async def fake_run_narration(ctx: object, day: date) -> pipeline.NarrationOutcome:
+        events.append("narrate")
+        return pipeline.NarrationOutcome.DONE
+
+    monkeypatch.setattr(pipeline, "run_briefing", fake_run_briefing)
+    monkeypatch.setattr(pipeline, "run_narration", fake_run_narration)
+    client.post("/briefing/write", data={"csrf_token": csrf_token(client)}, follow_redirects=False)
+
+    async def drain() -> None:
+        await asyncio.gather(*app.state.background)
+
+    run(client, drain)
+    assert events == ["brief"]

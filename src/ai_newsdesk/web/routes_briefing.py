@@ -62,6 +62,7 @@ _REASONS = {
     "off": "Audio is off in Settings.",
     "no_key": "Add an ElevenLabs key in Settings to hear this briefing.",
     "making": "Making audio. This takes a minute or two; reload to listen.",
+    "on_demand": "Audio is made when you ask.",
     "remaking": "Making new audio. This takes a minute or two; reload to listen.",
     "busy": "A run is in progress; try again in a few minutes.",
     "over_cap": "This month's audio allowance is used up.",
@@ -88,7 +89,7 @@ async def _listen(request: Request, briefing: BriefingRecord, audio_flag: str) -
     rs = await load_runtime_settings(store)
     scheduler = getattr(request.app.state, "scheduler", None)
     status = scheduler.narration_status(briefing.date) if scheduler is not None else None
-    key = "none"
+    key = "on_demand" if rs.narration_on_demand else "none"
     if not rs.narration_enabled:
         key = "off"
     elif ctx.has_narration_key is not None and not await ctx.has_narration_key():
@@ -192,6 +193,8 @@ async def _write_briefing_now(app: FastAPI) -> None:
         except Exception:
             log.exception("manual briefing failed")
             return
+        if (await load_runtime_settings(ctx.store)).narration_on_demand:
+            return  # only Make audio makes it (feedback-5)
         try:
             async with app.state.scheduler.lock:
                 outcome = await pipeline.run_narration(ctx, today)

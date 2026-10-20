@@ -23,12 +23,12 @@ from ai_newsdesk.runtime_settings import (
     update_runtime_settings,
 )
 from ai_newsdesk.scheduler import Scheduler
-from ai_newsdesk.tts.catalogue import SUGGESTED_VOICES
+from ai_newsdesk.tts.catalogue import RANDOM_VOICE, SUGGESTED_VOICES
 from ai_newsdesk.web.chart import spend_chart
 from ai_newsdesk.web.csrf import csrf_protect
 from ai_newsdesk.web.deps import api_keys_of, now_of, page, store_of, zone_of
 from ai_newsdesk.web.estimate import choices_of, frequency_options, profile_from, rates_for
-from ai_newsdesk.web.forms import NARRATION_MODELS, parse_settings_form
+from ai_newsdesk.web.forms import NARRATION_MODELS, NARRATION_WHEN, parse_settings_form
 from ai_newsdesk.web.keys import KEY_LABELS, MAX_KEY_CHARS, scrub
 from ai_newsdesk.web.runs import run_dict
 
@@ -78,13 +78,16 @@ def _values_from(runtime: RuntimeSettings) -> dict[str, str]:
     values["monthly_budget_usd"] = f"{runtime.monthly_budget_usd:.2f}"
     values["why_it_matters"] = "on" if runtime.why_it_matters else ""
     values["narration_enabled"] = "on" if runtime.narration_enabled else ""
+    values["narration_when"] = "on_demand" if runtime.narration_on_demand else "scheduled"
     return values
 
 
-def _values_echo(form: dict[str, str]) -> dict[str, str]:
+def _values_echo(form: dict[str, str], saved: RuntimeSettings) -> dict[str, str]:
     values = {key: form.get(key, "") for key in FIELDS}
     values["why_it_matters"] = "on" if form.get("why_it_matters") == "on" else ""
     values["narration_enabled"] = "on" if form.get("narration_enabled") == "on" else ""
+    # An older form without the field keeps what is saved, as saving would.
+    values["narration_when"] = form.get("narration_when") or _values_from(saved)["narration_when"]
     return values
 
 
@@ -104,7 +107,7 @@ def _voice_groups(
         ((v.voice_id, _voice_label(v)) for v in voices if v.voice_id not in skip),
         key=lambda pair: pair[1].lower(),
     )
-    known = skip | {vid for vid, _ in rest}
+    known = skip | {vid for vid, _ in rest} | {RANDOM_VOICE}
     return suggested, rest, None if current in known else current
 
 
@@ -194,6 +197,7 @@ async def _render(
             "voices_all": others,
             "voice_odd": odd,
             "narration_models": NARRATION_MODELS,
+            "narration_when": NARRATION_WHEN,
             "tts_chars": tts_chars,
             "tts_cap": runtime.narration_monthly_chars,
             "tts_quota": quota,
@@ -232,7 +236,10 @@ async def save_settings(request: Request) -> Response:
     parsed = parse_settings_form(form)
     if not parsed.ok:
         return await _render(
-            request, values=_values_echo(form), errors=parsed.errors, status_code=422
+            request,
+            values=_values_echo(form, await load_runtime_settings(store)),
+            errors=parsed.errors,
+            status_code=422,
         )
     try:
         # Step 1 validates everything again and saves nothing on error.
@@ -242,7 +249,12 @@ async def save_settings(request: Request) -> Response:
             str(e["loc"][0]) if e["loc"] else "form": "This value was refused."
             for e in exc.errors()
         }
-        return await _render(request, values=_values_echo(form), errors=errors, status_code=422)
+        return await _render(
+            request,
+            values=_values_echo(form, await load_runtime_settings(store)),
+            errors=errors,
+            status_code=422,
+        )
     await request.app.state.rebuild_context()
     return RedirectResponse("/settings?saved=settings", status_code=303)
 

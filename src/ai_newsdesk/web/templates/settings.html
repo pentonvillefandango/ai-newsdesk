@@ -106,7 +106,7 @@
     <section class="panel" id="read-aloud" aria-labelledby="read-aloud-title">
       <div class="panel__head">
         <h2 id="read-aloud-title">Read aloud</h2>
-        <p>After each briefing, ElevenLabs reads it out so it is ready to play. Needs an ElevenLabs key, below.</p>
+        <p>ElevenLabs reads the briefing out, ready after each briefing or when you ask. Needs an ElevenLabs key, below.</p>
       </div>
       <div class="panel__body">
         <div class="check">
@@ -115,6 +115,16 @@
             <label for="narration_enabled">Read the briefing aloud</label>
           </div>
         </div>
+        <fieldset class="field">
+          <legend>When to make audio</legend>
+          <div class="choice-row">
+            {% for value, label in narration_when %}
+            <label class="choice"><input type="radio" name="narration_when" value="{{ value }}"{% if values.narration_when == value %} checked{% endif %}{{ aria("narration_when", true) }}> {{ label }}</label>
+            {% endfor %}
+          </div>
+          <p class="field__hint" id="narration_when-hint">On demand spends characters only on the days you listen; press Make audio on the briefing.</p>
+          {{ error("narration_when") }}
+        </fieldset>
         <div class="field">
           <label for="narration_voice_id">Voice</label>
           <div class="voice-pick">
@@ -122,6 +132,7 @@
               {% if voice_odd %}
               <option value="{{ voice_odd }}" selected>{{ voice_odd }}</option>
               {% endif %}
+              <option value="random"{% if values.narration_voice_id == "random" %} selected{% endif %}>Random (any voice)</option>
               <optgroup label="Suggested">
                 {% for vid, label in voices_suggested %}
                 <option value="{{ vid }}"{% if values.narration_voice_id == vid %} selected{% endif %}>{{ label }}</option>

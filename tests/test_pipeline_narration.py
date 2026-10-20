@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from ai_newsdesk.narration import chunks, speech_text
 from ai_newsdesk.pipeline import NarrationOutcome, PipelineContext, prune_audio, run_narration
 from ai_newsdesk.runtime_settings import update_runtime_settings
 from ai_newsdesk.store.store import Store
-from ai_newsdesk.tts.catalogue import ElevenLabsCatalogue
+from ai_newsdesk.tts.catalogue import RANDOM_VOICE, SUGGESTED_VOICES, ElevenLabsCatalogue
 from tests.fakes import FakeNarrator
 from tests.pipeline_ctx import make_ctx
 
@@ -372,3 +373,48 @@ async def test_a_shutdown_while_reading_the_counter_records_the_estimate(
     with pytest.raises(asyncio.CancelledError):
         await run_narration(_ctx(store, clock, tmp_path, Cancelled()), DAY)
     assert await _usage(store) == [("eleven_v4", 100, 0)]
+
+
+class Chooser:
+    """Records what a random pick was offered and takes the last one."""
+
+    def __init__(self) -> None:
+        self.offered: list[list[str]] = []
+
+    def __call__(self, ids: Sequence[str]) -> str:
+        self.offered.append(list(ids))
+        return ids[-1]
+
+
+async def test_a_random_voice_comes_from_the_account_and_is_not_the_last_one(
+    store: Store, clock: FixedClock, tmp_path: Path
+) -> None:
+    await _brief(store, clock)
+    await update_runtime_settings(store, narration_voice_id=RANDOM_VOICE)
+    voices = [VoiceInfo(voice_id=v, name=v.title()) for v in ("ann", "bob", "cal")]
+    catalogue = ElevenLabsCatalogue(store, FakeNarrator(voices_result=voices, factors_result={}))
+    assert await catalogue.refresh()
+    narrator, choose = FakeNarrator(), Chooser()
+    ctx = _ctx(store, clock, tmp_path, narrator, catalogue=catalogue)
+    ctx.choose_voice = choose
+    assert await run_narration(ctx, DAY) is NarrationOutcome.DONE
+    assert choose.offered == [["ann", "bob", "cal"]]
+    rec = await store.get_briefing_audio(DAY)
+    assert rec is not None and (rec.voice_id, rec.voice_name) == ("cal", "Cal")
+    assert narrator.calls[0].voice_id == "cal"
+    assert await run_narration(ctx, DAY) is NarrationOutcome.DONE  # a remake
+    assert choose.offered[1] == ["ann", "bob"]  # never the same voice twice running
+
+
+async def test_a_random_voice_without_the_list_is_a_suggested_one(
+    store: Store, clock: FixedClock, tmp_path: Path
+) -> None:
+    await _brief(store, clock)
+    await update_runtime_settings(store, narration_voice_id=RANDOM_VOICE)
+    choose = Chooser()
+    ctx = _ctx(store, clock, tmp_path, FakeNarrator())
+    ctx.choose_voice = choose
+    assert await run_narration(ctx, DAY) is NarrationOutcome.DONE
+    assert choose.offered == [[vid for vid, _, _ in SUGGESTED_VOICES]]
+    rec = await store.get_briefing_audio(DAY)
+    assert rec is not None and rec.voice_name == "Matilda"

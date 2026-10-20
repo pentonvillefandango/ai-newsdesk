@@ -875,3 +875,16 @@ def test_the_read_aloud_step_follows_the_settings(app: FastAPI, client: TestClie
     run(client, update_runtime_settings, app.state.store, narration_enabled=False)
     step = _step(_diagram(client.get("/models").text), "audio")
     assert "Off" in step and "eleven_flash" not in step
+
+
+def test_the_read_aloud_step_says_random_and_on_demand(app: FastAPI, client: TestClient) -> None:
+    run(
+        client,
+        update_runtime_settings,
+        app.state.store,
+        narration_voice_id="random",
+        narration_on_demand=True,
+    )
+    step = _step(_diagram(client.get("/models").text), "audio")
+    assert "ElevenLabs · Random voice · eleven_v4" in step
+    assert "When you press Make audio" in step and "Made after each briefing" not in step

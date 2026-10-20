@@ -79,6 +79,7 @@ def _mock(
 
 
 FORM = {
+    "narration_when": "scheduled",
     "runs_per_day": "4",
     "briefing_time": "07:00",
     "daily_review_cap": "500",
@@ -489,3 +490,57 @@ def test_sample_non_audio_upstream_is_502(app: FastAPI, client: TestClient) -> N
         ),
     )
     assert client.get("/settings/voice-sample/zed1").status_code == 502
+
+
+# ---- feedback-5: on demand and a random voice ---------------------------------------------------
+
+
+def test_when_to_make_audio_is_a_choice_saved_with_the_rest(
+    app: FastAPI, client: TestClient
+) -> None:
+    sec = _section(client.get("/settings").text)
+    assert 'name="narration_when" value="scheduled" checked' in sec
+    assert "Ready at briefing time" in sec and "Only when I press Make audio" in sec
+    assert _post(client, narration_when="on_demand").status_code == 303
+    assert run(client, load_runtime_settings, app.state.store).narration_on_demand is True
+    assert 'name="narration_when" value="on_demand" checked' in _section(
+        client.get("/settings").text
+    )
+    assert _post(client, narration_when="scheduled").status_code == 303
+    assert run(client, load_runtime_settings, app.state.store).narration_on_demand is False
+
+
+def test_a_bad_when_is_refused(app: FastAPI, client: TestClient) -> None:
+    r = _post(client, narration_when="sometimes")
+    assert r.status_code == 422 and "Choose when audio is made." in r.text
+
+
+def test_random_is_the_first_voice_and_can_be_saved(app: FastAPI, client: TestClient) -> None:
+    _seed(client, app)
+    sec = _section(client.get("/settings").text)
+    assert sec.index('value="random"') < sec.index('<optgroup label="Suggested">')
+    assert "Random (any voice)" in sec
+    assert _post(client, narration_voice_id="random").status_code == 303
+    assert run(client, load_runtime_settings, app.state.store).narration_voice_id == "random"
+    sec = _section(client.get("/settings").text)
+    assert re.search(r'<option value="random" selected>', sec)
+    assert sec.count(" selected") == 2  # voice and model; "random" is not an odd id
+
+
+def test_random_has_no_sample(app: FastAPI, client: TestClient) -> None:
+    _seed(client, app)
+    seen = _mock(app)
+    assert client.get("/settings/voice-sample/random").status_code == 404
+    assert seen == []
+
+
+def test_a_422_without_when_keeps_the_saved_choice_and_the_hint_is_linked(
+    app: FastAPI, client: TestClient
+) -> None:
+    run(client, update_runtime_settings, app.state.store, narration_on_demand=True)
+    data = {k: v for k, v in FORM.items() if k != "narration_when"} | {"narration_model": "x"}
+    data["csrf_token"] = csrf_token(client)
+    r = client.post("/settings", data=data, follow_redirects=False)
+    assert r.status_code == 422
+    assert 'name="narration_when" value="on_demand" checked' in r.text
+    assert 'aria-describedby="narration_when-hint"' in _section(client.get("/settings").text)

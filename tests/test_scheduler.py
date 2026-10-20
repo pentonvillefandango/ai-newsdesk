@@ -631,3 +631,13 @@ async def test_no_lock_is_taken_when_narration_cannot_run(store: Store, why: str
     expected = NarrationOutcome.OFF if why == "off" else NarrationOutcome.NO_KEY
     st = sched.narration_status(D)
     assert (st.tries, st.last_outcome) == (0, expected)
+
+
+async def test_on_demand_audio_is_never_made_by_the_scheduler(store: Store) -> None:
+    # feedback-5: "Only when I press Make audio".
+    await update_runtime_settings(store, narration_on_demand=True)
+    clock = FixedClock(BRIEF_AT)
+    sched, fn = narration_scheduler(store, clock)
+    await _ticks(sched, clock, 6)
+    assert fn.calls == []
+    assert sched.narration_status(D).tries == 0

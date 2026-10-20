@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import date
 from html import unescape
 
@@ -93,8 +94,11 @@ def test_page_with_audio_has_player_speeds_and_caption(
     text = client.get("/briefing").text
     src = f"/briefing/{DAY}/audio.mp3?v={name.removesuffix('.mp3').rsplit('-', 1)[-1]}"
     assert f'<audio controls preload="metadata" src="{src}">' in text
-    for rate in ("1", "1.25", "1.5"):
-        assert f'<button type="button" data-rate="{rate}"' in text
+    rates = ("1", "1.1", "1.15", "1.2", "1.25", "1.3", "1.4", "1.5")  # feedback-5
+    assert re.findall(r'data-rate="([0-9.]+)"', text) == list(rates)
+    assert '<button type="button" data-rate="1.25" aria-pressed="true">1.25\u00d7</button>' in text
+    speeds = text.split('class="listen__speed"', 1)[1].split("</div>", 1)[0]
+    assert speeds.count('aria-pressed="true"') == 1
     assert "aria-pressed" in text
     assert "Read by Daniel · 2 min · made 09:30" in text  # 08:30 UTC is 09:30 in London
     assert "Make audio" not in text
@@ -436,3 +440,11 @@ def test_write_now_marks_the_day_in_flight_while_it_works(
     assert seen == ["brief True", "narrate True"]
     assert DAY not in app.state.audio_in_flight
     assert "Making audio" not in client.get("/briefing?audio=making").text
+
+
+def test_on_demand_says_audio_is_made_when_you_ask(app: FastAPI, client: TestClient) -> None:
+    _briefing(client, app)
+    _set(client, app, narration_on_demand=True)
+    text = client.get("/briefing").text
+    assert "Audio is made when you ask." in text
+    assert "Make audio" in text
