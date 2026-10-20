@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -70,6 +71,13 @@ def parse_hhmm(value: str) -> time:
 def briefing_due(now: datetime, briefing_time: str, tz: ZoneInfo) -> date | None:
     local = now.astimezone(tz)
     return local.date() if local.time() >= parse_hhmm(briefing_time) else None
+
+
+@dataclass(frozen=True)
+class BriefingStatus:
+    tries: int
+    max_tries: int
+    gave_up: bool
 
 
 class Scheduler:
@@ -163,6 +171,11 @@ class Scheduler:
                 self._runs_finished += 1
         finally:
             self.lock.release()
+
+    def briefing_status(self, day: date) -> BriefingStatus:
+        """Read-only: how many tries the scheduler has made for `day` (0 for any other day)."""
+        tries = self._briefing_tries if day == self._briefing_try_day else 0
+        return BriefingStatus(tries, BRIEFING_MAX_ATTEMPTS, tries >= BRIEFING_MAX_ATTEMPTS)
 
     def _may_try_briefing(self, day: date, now: datetime) -> bool:
         if day != self._briefing_try_day:

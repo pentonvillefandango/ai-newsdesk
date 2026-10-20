@@ -330,3 +330,20 @@ async def test_shutdown_during_the_scheduled_wait(store: Store) -> None:
     assert sched.lock.locked()  # still ours, not taken by the cancelled waiter
     sched.lock.release()
     assert not sched.lock.locked()
+
+
+async def test_briefing_status_reports_tries_and_give_up(store: Store) -> None:
+    clock = FixedClock(datetime(2026, 10, 14, 6, 0, tzinfo=UTC))  # 07:00 BST
+    fn = FlakyBriefing(*([False] * 6))
+    sched = briefing_scheduler(store, clock, fn)
+    day = date(2026, 10, 14)
+    assert sched.briefing_status(day).tries == 0
+    await sched.tick()
+    st = sched.briefing_status(day)
+    assert (st.tries, st.max_tries, st.gave_up) == (1, 6, False)
+    for _ in range(5):
+        clock.advance(timedelta(minutes=30))
+        await sched.tick()
+    assert sched.briefing_status(day).gave_up is True
+    assert sched.briefing_status(date(2026, 10, 15)).tries == 0  # another day: no attempts
+    assert sched.briefing_status(day).tries == 6  # reading never resets the state

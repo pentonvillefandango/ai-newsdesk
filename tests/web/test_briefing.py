@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date, timedelta
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from ai_newsdesk import pipeline
+from ai_newsdesk.runtime_settings import update_runtime_settings
 from tests.web import seed
-from tests.web.support import NOW, run
+from tests.web.support import NOW, csrf_token, run
 
 
 def _briefing(client: TestClient, app: FastAPI, day: date, body: str, story_ids: list[int]) -> None:
@@ -231,3 +235,120 @@ def test_a_briefing_without_stories_has_no_covered_list(app: FastAPI, client: Te
     text = client.get("/briefing").text
     assert "In this briefing" not in text
     assert '<nav class="archive"' in text
+
+
+NOTICE = "Today's briefing isn't ready."
+
+
+def test_notice_shows_on_latest_when_today_is_missing(app: FastAPI, client: TestClient) -> None:
+    _briefing(client, app, date(2026, 10, 13), "Tuesday news.", [])
+    text = client.get("/briefing").text  # NOW is 09:30 BST on 14 October, after 07:00
+    assert NOTICE in text
+    assert "Showing the one from Tuesday 13 October." in text
+    assert 'action="/briefing/write"' in text
+    assert "Write it now" in text
+    assert "Tried" not in text  # no scheduler attempts yet
+    assert NOTICE not in client.get("/briefing/2026-10-13").text
+
+
+def test_notice_leaves_out_showing_when_there_is_no_briefing(client: TestClient) -> None:
+    text = client.get("/briefing").text
+    assert NOTICE in text
+    assert "Showing the one from" not in text
+
+
+def test_no_notice_before_briefing_time_or_when_today_exists(
+    app: FastAPI, client: TestClient
+) -> None:
+    run(client, update_runtime_settings, app.state.store, briefing_time="23:00")
+    assert NOTICE not in client.get("/briefing").text
+    run(client, update_runtime_settings, app.state.store, briefing_time="07:00")
+    assert NOTICE in client.get("/briefing").text
+    _briefing(client, app, date(2026, 10, 14), "Today.", [])
+    assert NOTICE not in client.get("/briefing").text
+
+
+def test_notice_wording_for_tries_and_giving_up(app: FastAPI, client: TestClient) -> None:
+    sched = app.state.scheduler
+    sched._briefing_try_day, sched._briefing_tries = date(2026, 10, 14), 2
+    text = client.get("/briefing").text
+    assert "Tried 2 of 6 times; the last try failed." in text
+    assert "stopped trying" not in text
+    sched._briefing_tries = 6
+    text = client.get("/briefing").text
+    assert "The scheduler has stopped trying today." in text
+    assert "Tried 6" not in text
+    assert sched._briefing_tries == 6  # reading the page changes nothing
+
+
+def test_write_now_starts_a_background_briefing(
+    app: FastAPI, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[date] = []
+
+    async def fake_run_briefing(ctx: object, day: date) -> bool:
+        calls.append(day)
+        return True
+
+    monkeypatch.setattr(pipeline, "run_briefing", fake_run_briefing)
+    r = client.post(
+        "/briefing/write", data={"csrf_token": csrf_token(client)}, follow_redirects=False
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == "/briefing?writing=1"
+
+    async def drain() -> None:
+        await asyncio.gather(*app.state.background)
+
+    run(client, drain)
+    assert calls == [date(2026, 10, 14)]
+    assert "Writing today's briefing. This takes about a minute; reload to see it." in (
+        client.get(r.headers["location"]).text
+    )
+
+
+def test_write_now_swallows_a_failure(
+    app: FastAPI, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def boom(ctx: object, day: date) -> bool:
+        raise RuntimeError("writer down")
+
+    monkeypatch.setattr(pipeline, "run_briefing", boom)
+    client.post("/briefing/write", data={"csrf_token": csrf_token(client)}, follow_redirects=False)
+
+    async def drain() -> None:
+        await asyncio.gather(*app.state.background)
+
+    run(client, drain)
+    assert not app.state.scheduler.lock.locked()
+
+
+def test_write_now_is_busy_while_the_lock_is_held(
+    app: FastAPI, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[date] = []
+
+    async def fake_run_briefing(ctx: object, day: date) -> bool:
+        calls.append(day)
+        return True
+
+    monkeypatch.setattr(pipeline, "run_briefing", fake_run_briefing)
+    lock: asyncio.Lock = app.state.scheduler.lock
+    run(client, lock.acquire)
+    try:
+        r = client.post(
+            "/briefing/write", data={"csrf_token": csrf_token(client)}, follow_redirects=False
+        )
+        assert r.status_code == 303
+        assert r.headers["location"] == "/briefing?writing=busy"
+        assert "A run is in progress; try again in a few minutes." in (
+            client.get(r.headers["location"]).text
+        )
+    finally:
+        lock.release()
+    assert calls == []
+    assert len(app.state.background) == 0
+
+
+def test_write_now_needs_csrf(client: TestClient) -> None:
+    assert client.post("/briefing/write").status_code == 403

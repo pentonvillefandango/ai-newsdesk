@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 from datetime import date
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, FastAPI, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from ai_newsdesk import pipeline
 from ai_newsdesk.models import Story
+from ai_newsdesk.runtime_settings import load_runtime_settings
+from ai_newsdesk.scheduler import parse_hhmm
 from ai_newsdesk.store.records import BriefingRecord
 from ai_newsdesk.web.briefing_text import parse_briefing
 from ai_newsdesk.web.csrf import csrf_protect
 from ai_newsdesk.web.deps import page, store_of
 
 router = APIRouter(include_in_schema=False, dependencies=[Depends(csrf_protect)])
+log = logging.getLogger(__name__)
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -27,8 +34,34 @@ def _parse_day(value: str) -> date | None:
         return None
 
 
+async def _notice(request: Request, latest: BriefingRecord | None) -> dict[str, object] | None:
+    """The "today's briefing isn't ready" notice, or None when it is, or isn't due yet."""
+    store = store_of(request)
+    ctx = request.app.state.ctx
+    local = ctx.clock.now().astimezone(ZoneInfo(ctx.settings.tz))
+    rs = await load_runtime_settings(store)
+    today = local.date()
+    if local.time() < parse_hhmm(rs.briefing_time) or await store.get_briefing(today) is not None:
+        return None
+    scheduler = getattr(request.app.state, "scheduler", None)
+    status = scheduler.briefing_status(today) if scheduler is not None else None
+    return {
+        "showing": f"{latest.date:%A} {latest.date.day} {latest.date:%B}"
+        if latest is not None
+        else None,
+        "tries": status.tries if status is not None else 0,
+        "max_tries": status.max_tries if status is not None else 0,
+        "gave_up": status.gave_up if status is not None else False,
+    }
+
+
 async def _render(
-    request: Request, briefing: BriefingRecord | None, *, status_code: int = 200
+    request: Request,
+    briefing: BriefingRecord | None,
+    *,
+    status_code: int = 200,
+    notice: dict[str, object] | None = None,
+    writing: str = "",
 ) -> HTMLResponse:
     store = store_of(request)
     allowed: set[str] = set()
@@ -50,14 +83,48 @@ async def _render(
             "blocks": parse_briefing(briefing.body, allowed) if briefing is not None else [],
             "archive": await store.briefing_dates(),
             "missing": status_code == 404,
+            "notice": notice,
+            "writing": writing,
         },
         status_code=status_code,
     )
 
 
 @router.get("/briefing", response_class=HTMLResponse)
-async def latest_briefing(request: Request) -> HTMLResponse:
-    return await _render(request, await store_of(request).latest_briefing())
+async def latest_briefing(request: Request, writing: str = "") -> HTMLResponse:
+    latest = await store_of(request).latest_briefing()
+    return await _render(
+        request,
+        latest,
+        notice=await _notice(request, latest),
+        writing=writing if writing in ("1", "busy") else "",
+    )
+
+
+async def _write_briefing_now(app: FastAPI) -> None:
+    """Write today's briefing under the scheduler lock. Logs and swallows any failure."""
+    try:
+        ctx = app.state.ctx
+        today = ctx.clock.now().astimezone(ZoneInfo(ctx.settings.tz)).date()
+        async with app.state.scheduler.lock:
+            if not await pipeline.run_briefing(ctx, today):
+                log.warning("manual briefing for %s was not written", today.isoformat())
+    except Exception:
+        log.exception("manual briefing failed")
+
+
+@router.post("/briefing/write")
+async def write_briefing(request: Request) -> Response:
+    app: FastAPI = request.app
+    scheduler = getattr(app.state, "scheduler", None)
+    if scheduler is None:
+        return Response("The scheduler is not running.", status_code=503)
+    if scheduler.lock.locked():
+        return RedirectResponse("/briefing?writing=busy", status_code=303)
+    task = asyncio.create_task(_write_briefing_now(app), name="manual-briefing")
+    app.state.background.add(task)
+    task.add_done_callback(app.state.background.discard)
+    return RedirectResponse("/briefing?writing=1", status_code=303)
 
 
 @router.get("/briefing/{day}", response_class=HTMLResponse)

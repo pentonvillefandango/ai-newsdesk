@@ -1,6 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Briefing on Newsdesk{% endblock %}
 {% block content %}
+{% if writing == "1" %}
+<div class="notice notice--ok" role="status"><p>Writing today's briefing. This takes about a minute; reload to see it.</p></div>
+{% elif writing == "busy" %}
+<div class="notice notice--warn" role="status"><p>A run is in progress; try again in a few minutes.</p></div>
+{% endif %}
+{% if notice %}
+<div class="notice notice--warn" role="status">
+  <p>Today's briefing isn't ready.{% if notice.showing %} Showing the one from {{ notice.showing }}.{% endif %}
+  {% if notice.gave_up %}The scheduler has stopped trying today.{% elif notice.tries >= 1 %}Tried {{ notice.tries }} of {{ notice.max_tries }} times; the last try failed.{% endif %}</p>
+  <form method="post" action="/briefing/write">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="button">Write it now</button>
+  </form>
+</div>
+{% endif %}
 <div class="briefing">
   <article class="briefing__main" aria-labelledby="briefing-title">
     <header class="page-head">
