@@ -82,11 +82,12 @@ def _values_from(runtime: RuntimeSettings) -> dict[str, str]:
     return values
 
 
-def _values_echo(form: dict[str, str]) -> dict[str, str]:
+def _values_echo(form: dict[str, str], saved: RuntimeSettings) -> dict[str, str]:
     values = {key: form.get(key, "") for key in FIELDS}
     values["why_it_matters"] = "on" if form.get("why_it_matters") == "on" else ""
     values["narration_enabled"] = "on" if form.get("narration_enabled") == "on" else ""
-    values["narration_when"] = form.get("narration_when", "scheduled")
+    # An older form without the field keeps what is saved, as saving would.
+    values["narration_when"] = form.get("narration_when") or _values_from(saved)["narration_when"]
     return values
 
 
@@ -235,7 +236,10 @@ async def save_settings(request: Request) -> Response:
     parsed = parse_settings_form(form)
     if not parsed.ok:
         return await _render(
-            request, values=_values_echo(form), errors=parsed.errors, status_code=422
+            request,
+            values=_values_echo(form, await load_runtime_settings(store)),
+            errors=parsed.errors,
+            status_code=422,
         )
     try:
         # Step 1 validates everything again and saves nothing on error.
@@ -245,7 +249,12 @@ async def save_settings(request: Request) -> Response:
             str(e["loc"][0]) if e["loc"] else "form": "This value was refused."
             for e in exc.errors()
         }
-        return await _render(request, values=_values_echo(form), errors=errors, status_code=422)
+        return await _render(
+            request,
+            values=_values_echo(form, await load_runtime_settings(store)),
+            errors=errors,
+            status_code=422,
+        )
     await request.app.state.rebuild_context()
     return RedirectResponse("/settings?saved=settings", status_code=303)
 

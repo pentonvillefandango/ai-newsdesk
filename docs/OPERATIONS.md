@@ -122,7 +122,7 @@ Recovery: an interrupted deploy leaves `current` on the new commit with no log e
 
 ## The briefing and Read aloud (ElevenLabs)
 
-**If today's briefing is missing.** After the briefing time the Briefing page shows "Today's briefing isn't ready", with the latest earlier briefing below it. While the scheduler is still retrying it says "Tried N of M times; the last try failed"; when it has stopped (6 tries a day, 30 minutes apart) it says so. The notice has a **Write it now** button: it writes today's briefing in the background under the same run lock as the scheduler, then makes its audio. If a run holds the lock the page says "A run is in progress; try again in a few minutes" and starts nothing. Reload after about a minute.
+**If today's briefing is missing.** After the briefing time the Briefing page shows "Today's briefing isn't ready", with the latest earlier briefing below it. While the scheduler is still retrying it says "Tried N of M times; the last try failed"; when it has stopped (6 tries a day, 30 minutes apart) it says so. The notice has a **Write it now** button: it writes today's briefing in the background under the same run lock as the scheduler, then makes its audio (unless audio is on demand). If a run holds the lock the page says "A run is in progress; try again in a few minutes" and starts nothing. Reload after about a minute.
 
 **What it does.** After each briefing is saved, the app turns it into an MP3 with ElevenLabs so it is ready to play when the owner sits down. The Briefing page shows a player with speed buttons from 1× to 1.5× (it starts at 1.25×; the browser remembers the last one clicked). The text read is the briefing with markdown, URLs and citation links that end a sentence dropped, under a spoken opening line.
 

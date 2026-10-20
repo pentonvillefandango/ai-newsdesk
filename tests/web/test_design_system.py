@@ -385,3 +385,10 @@ def test_the_accent_menu_closes_on_focus_out_and_names_the_current_accent() -> N
     assert 'addEventListener("focusout"' in js
     assert "event.relatedTarget" in js
     assert '"Accent colour: "' in js
+
+
+def test_the_speed_row_wraps_on_a_phone() -> None:
+    # Eight speed buttons (feedback-5) are wider than a 375px phone: the row must wrap.
+    css = (STATIC_DIR / "app.css").read_text()
+    rule = css.split(".listen__speed {", 1)[1].split("}", 1)[0]
+    assert "flex-wrap: wrap" in rule

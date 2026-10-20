@@ -532,3 +532,15 @@ def test_random_has_no_sample(app: FastAPI, client: TestClient) -> None:
     seen = _mock(app)
     assert client.get("/settings/voice-sample/random").status_code == 404
     assert seen == []
+
+
+def test_a_422_without_when_keeps_the_saved_choice_and_the_hint_is_linked(
+    app: FastAPI, client: TestClient
+) -> None:
+    run(client, update_runtime_settings, app.state.store, narration_on_demand=True)
+    data = {k: v for k, v in FORM.items() if k != "narration_when"} | {"narration_model": "x"}
+    data["csrf_token"] = csrf_token(client)
+    r = client.post("/settings", data=data, follow_redirects=False)
+    assert r.status_code == 422
+    assert 'name="narration_when" value="on_demand" checked' in r.text
+    assert 'aria-describedby="narration_when-hint"' in _section(client.get("/settings").text)

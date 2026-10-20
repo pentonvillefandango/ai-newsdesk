@@ -2880,6 +2880,7 @@ select:focus-visible {
 
 .listen__speed {
   display: inline-flex;
+  flex-wrap: wrap; /* eight buttons are wider than a phone (feedback-5) */
   gap: var(--space-1);
 }
 

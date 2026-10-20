@@ -119,7 +119,7 @@
           <legend>When to make audio</legend>
           <div class="choice-row">
             {% for value, label in narration_when %}
-            <label class="choice"><input type="radio" name="narration_when" value="{{ value }}"{% if values.narration_when == value %} checked{% endif %}{{ aria("narration_when") }}> {{ label }}</label>
+            <label class="choice"><input type="radio" name="narration_when" value="{{ value }}"{% if values.narration_when == value %} checked{% endif %}{{ aria("narration_when", true) }}> {{ label }}</label>
             {% endfor %}
           </div>
           <p class="field__hint" id="narration_when-hint">On demand spends characters only on the days you listen; press Make audio on the briefing.</p>
