@@ -19,7 +19,6 @@ from ai_newsdesk.llm.validate import (
 )
 from ai_newsdesk.models import SourceConfig, SourceKind, Trust
 from ai_newsdesk.runtime_settings import RuntimeSettings
-from ai_newsdesk.tts.catalogue import ElevenLabsCatalogue
 from ai_newsdesk.web.estimate import RUNS_PER_DAY_OPTIONS
 from ai_newsdesk.web.model_choices import effective_model
 
@@ -129,24 +128,11 @@ def parse_source_form(
 
 
 VOICE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
-SUGGESTED_VOICES = (
-    ("onwK4e9ZLuTAKqWW03F9", "Daniel", "British, steady broadcaster"),
-    ("pFZP5JQG7iQjIQuC4Bku", "Lily", "British, news and narration"),
-    ("XrExE9yKIg1WjnnlVkGX", "Matilda", "American, professional"),
-)
 NARRATION_MODELS = (
     ("eleven_v4", "Eleven v4 (best)"),
     ("eleven_multilingual_v2", "Multilingual v2 (most stable long-form)"),
     ("eleven_flash_v2_5", "Flash v2.5 (half the characters)"),
 )
-
-
-def voice_name(catalogue: ElevenLabsCatalogue, voice_id: str) -> str:
-    """The voice's name: from the account list, else a suggested one, else its id."""
-    name = catalogue.voice_name(voice_id)
-    if name != voice_id:
-        return name
-    return {vid: label for vid, label, _ in SUGGESTED_VOICES}.get(voice_id, voice_id)
 
 
 BRIEFING_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")

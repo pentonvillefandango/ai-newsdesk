@@ -59,7 +59,7 @@ from ai_newsdesk.protocols import (
 from ai_newsdesk.runtime_settings import RuntimeSettings, load_runtime_settings
 from ai_newsdesk.store.records import BriefingAudioRecord
 from ai_newsdesk.store.store import Store
-from ai_newsdesk.tts.catalogue import ElevenLabsCatalogue
+from ai_newsdesk.tts.catalogue import ElevenLabsCatalogue, fallback_voice_name
 
 log = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ class PipelineContext:
     # Read aloud (feedback-3). No narrator or no audio directory: narration is off.
     narrator: Narrator | None = None
     audio: AudioFiles | None = None
-    tts_catalogue: ElevenLabsCatalogue | None = None  # None: voice ids, factor 1.0
+    tts_catalogue: ElevenLabsCatalogue | None = None  # None: suggested names or ids, factor 1.0
     # Whether an ElevenLabs key resolves; None leaves it to the narrator's own answer.
     has_narration_key: Callable[[], Awaitable[bool]] | None = None
 
@@ -543,7 +543,7 @@ async def run_narration(ctx: PipelineContext, day: date) -> NarrationOutcome:
             voice_name=(
                 catalogue.voice_name(rs.narration_voice_id)
                 if catalogue is not None
-                else rs.narration_voice_id
+                else fallback_voice_name(rs.narration_voice_id)
             ),
             model_id=rs.narration_model,
             characters=result.characters_billed,

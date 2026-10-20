@@ -2,9 +2,9 @@
 settings table under `elevenlabs_catalogue` (feedback-3).
 
 A refresh needs both lists; when either call fails the last good copy stays. Without a copy a
-voice is named by its id and every factor is 1.0, which never under-counts. Factors from the
-API are clamped to [0.0, 10.0] (non-finite ones become 1.0), so a wild value can never overflow
-the billing arithmetic.
+suggested voice keeps its name, any other is named by its id, and every factor is 1.0, which never
+under-counts. Factors from the API are clamped to [0.0, 10.0] (non-finite ones become 1.0), so a
+wild value can never overflow the billing arithmetic.
 """
 
 from __future__ import annotations
@@ -24,6 +24,17 @@ log = logging.getLogger(__name__)
 SETTING_KEY = "elevenlabs_catalogue"
 STALE_AFTER = timedelta(hours=24)
 MAX_FACTOR = 10.0
+SUGGESTED_VOICES = (
+    ("onwK4e9ZLuTAKqWW03F9", "Daniel", "British, steady broadcaster"),
+    ("pFZP5JQG7iQjIQuC4Bku", "Lily", "British, news and narration"),
+    ("XrExE9yKIg1WjnnlVkGX", "Matilda", "American, professional"),
+)
+_SUGGESTED_NAMES = {vid: name for vid, name, _ in SUGGESTED_VOICES}
+
+
+def fallback_voice_name(voice_id: str) -> str:
+    """A suggested voice's name, else the id: used before the account's list has loaded."""
+    return _SUGGESTED_NAMES.get(voice_id, voice_id)
 
 
 def clamp_factor(value: float) -> float:
@@ -96,7 +107,7 @@ class ElevenLabsCatalogue:
             for voice in data.voices:
                 if voice.voice_id == voice_id:
                     return voice.name
-        return voice_id
+        return fallback_voice_name(voice_id)
 
     def factor(self, model_id: str) -> float:
         data = self._data
