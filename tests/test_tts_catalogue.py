@@ -29,7 +29,10 @@ async def test_nothing_cached_means_defaults(store: Store) -> None:
     assert await cat.load() is None
     assert cat.cached() is None
     assert cat.factor("eleven_v4") == 1.0
-    assert cat.voice_name("onwK4e9ZLuTAKqWW03F9") == "onwK4e9ZLuTAKqWW03F9"
+    # Before the account's list loads, the suggested voices still have names; others keep the id.
+    assert cat.voice_name("onwK4e9ZLuTAKqWW03F9") == "Daniel"
+    assert cat.voice_name("XrExE9yKIg1WjnnlVkGX") == "Matilda"
+    assert cat.voice_name("nobody") == "nobody"
     assert cat.is_stale() is True
 
 

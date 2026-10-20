@@ -81,12 +81,25 @@ async def test_done_writes_the_file_saves_the_row_and_records_usage(
     assert (call.voice_id, call.model_id, call.credit_factor) == (DANIEL, "eleven_v4", 1.0)
     rec = await store.get_briefing_audio(DAY)
     assert rec is not None
-    assert (rec.voice_id, rec.voice_name, rec.model_id) == (DANIEL, DANIEL, "eleven_v4")
+    assert (rec.voice_id, rec.voice_name, rec.model_id) == (DANIEL, "Daniel", "eleven_v4")
     assert (rec.characters, rec.bytes, rec.created_at) == (77, 7, clock.now())
     assert _files(tmp_path) == {rec.file}
     assert ctx.audio is not None
     assert ctx.audio.path(rec.file).read_bytes() == b"ID3-mp3"
     assert await _usage(store) == [("eleven_v4", 77, 1)]
+
+
+async def test_a_suggested_voice_is_named_before_the_voice_list_loads(
+    store: Store, clock: FixedClock, tmp_path: Path
+) -> None:
+    # Live on 2026-10-20 the first narration after a deploy ran before the voice list had
+    # loaded, and the caption read "Read by onwK4e9ZLuTAKqWW03F9".
+    await _brief(store, clock)
+    catalogue = ElevenLabsCatalogue(store, FakeNarrator())  # nothing cached or fetched yet
+    ctx = _ctx(store, clock, tmp_path, FakeNarrator(), catalogue=catalogue)
+    assert await run_narration(ctx, DAY) is NarrationOutcome.DONE
+    rec = await store.get_briefing_audio(DAY)
+    assert rec is not None and rec.voice_name == "Daniel"
 
 
 async def test_the_catalogue_gives_the_voice_name_and_the_factor(

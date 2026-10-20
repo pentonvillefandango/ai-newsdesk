@@ -23,15 +23,12 @@ from ai_newsdesk.runtime_settings import (
     update_runtime_settings,
 )
 from ai_newsdesk.scheduler import Scheduler
+from ai_newsdesk.tts.catalogue import SUGGESTED_VOICES
 from ai_newsdesk.web.chart import spend_chart
 from ai_newsdesk.web.csrf import csrf_protect
 from ai_newsdesk.web.deps import api_keys_of, now_of, page, store_of, zone_of
 from ai_newsdesk.web.estimate import choices_of, frequency_options, profile_from, rates_for
-from ai_newsdesk.web.forms import (
-    NARRATION_MODELS,
-    SUGGESTED_VOICES,
-    parse_settings_form,
-)
+from ai_newsdesk.web.forms import NARRATION_MODELS, parse_settings_form
 from ai_newsdesk.web.keys import KEY_LABELS, MAX_KEY_CHARS, scrub
 from ai_newsdesk.web.runs import run_dict
 

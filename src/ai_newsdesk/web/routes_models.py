@@ -20,7 +20,7 @@ from ai_newsdesk.runtime_settings import (
 from ai_newsdesk.web.csrf import csrf_protect
 from ai_newsdesk.web.deps import api_keys_of, is_htmx, page, partial, store_of
 from ai_newsdesk.web.flow import flow_steps
-from ai_newsdesk.web.forms import parse_models_form, voice_name
+from ai_newsdesk.web.forms import parse_models_form
 from ai_newsdesk.web.model_choices import (
     JOB_NAMES,
     JUDGE_WARNING,
@@ -84,7 +84,7 @@ async def _render(
                 runtime,
                 app.state.prices,
                 scheduler_on=app.state.settings.scheduler_enabled,
-                voice_name=voice_name(app.state.deps.tts_catalogue, runtime.narration_voice_id),
+                voice_name=app.state.deps.tts_catalogue.voice_name(runtime.narration_voice_id),
             ),
             "model_rows": model_rows(form, shortlist=app.state.shortlist, prices=app.state.prices),
             "datalists": datalists(app.state.prices, catalogue),
