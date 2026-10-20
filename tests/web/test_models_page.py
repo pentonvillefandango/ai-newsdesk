@@ -857,7 +857,7 @@ def test_the_diagram_has_a_read_aloud_step_after_the_briefing(
     keys = re.findall(r'id="flow-([a-z]+)"', diagram)
     assert len(keys) == 12 and keys.index("audio") == keys.index("briefing") + 1
     step = _step(diagram, "audio")
-    assert "Read aloud" in step and "ElevenLabs · Daniel · eleven_v4" in step
+    assert "Read aloud" in step and "ElevenLabs · Lily · eleven_v4" in step
     assert 'class="flow__step flow__step--tool"' in step  # its own character meter, not USD
 
 

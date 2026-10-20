@@ -89,9 +89,10 @@ def test_page_with_audio_has_player_speeds_and_caption(
     app: FastAPI, client: TestClient, audio_dir: AudioFiles
 ) -> None:
     _briefing(client, app)
-    _audio(client, app, audio_dir, data=b"x" * 960_000)  # 2 minutes at 64 kbps
+    name = _audio(client, app, audio_dir, data=b"x" * 960_000)  # 2 minutes at 64 kbps
     text = client.get("/briefing").text
-    assert f'<audio controls preload="metadata" src="/briefing/{DAY}/audio.mp3">' in text
+    src = f"/briefing/{DAY}/audio.mp3?v={name.removesuffix('.mp3').rsplit('-', 1)[-1]}"
+    assert f'<audio controls preload="metadata" src="{src}">' in text
     for rate in ("1", "1.25", "1.5"):
         assert f'<button type="button" data-rate="{rate}"' in text
     assert "aria-pressed" in text
@@ -115,8 +116,38 @@ def test_older_day_page_points_at_its_own_audio(
     _briefing(client, app, old)
     _briefing(client, app, DAY)
     _audio(client, app, audio_dir, old)
-    assert f'src="/briefing/{old}/audio.mp3"' in client.get(f"/briefing/{old}").text
+    assert f'src="/briefing/{old}/audio.mp3?v=' in client.get(f"/briefing/{old}").text
     assert "<audio" not in client.get("/briefing").text
+
+
+def test_a_remade_audio_gets_a_new_address(
+    app: FastAPI, client: TestClient, audio_dir: AudioFiles
+) -> None:
+    # The MP3 is cached for a day, so a remake must change its URL or the browser replays the
+    # old voice (feedback-4).
+    _briefing(client, app)
+    _audio(client, app, audio_dir, data=b"first")
+    before = client.get("/briefing").text
+    _audio(client, app, audio_dir, data=b"second")
+    after = client.get("/briefing").text
+    src = lambda page: page.split('<audio controls preload="metadata" src="', 1)[1].split('"', 1)[0]  # noqa: E731
+    assert src(before) != src(after)
+    assert client.get(src(after)).content == b"second"
+
+
+def test_a_remake_in_flight_says_so_under_the_old_player(
+    app: FastAPI, client: TestClient, audio_dir: AudioFiles
+) -> None:
+    _briefing(client, app)
+    _audio(client, app, audio_dir)
+    assert "Making new audio" not in client.get("/briefing").text
+    app.state.audio_in_flight.add(DAY)
+    try:
+        text = client.get("/briefing?audio=making").text
+        assert "<audio controls" in text
+        assert "Making new audio. This takes a minute or two; reload to listen." in text
+    finally:
+        app.state.audio_in_flight.discard(DAY)
 
 
 def _set(client: TestClient, app: FastAPI, **values: object) -> None:

@@ -34,13 +34,14 @@
     {% if listen %}
     <section class="listen" aria-label="Listen to this briefing">
       {% if listen.audio %}
-      <audio controls preload="metadata" src="/briefing/{{ briefing.date.isoformat() }}/audio.mp3"></audio>
+      <audio controls preload="metadata" src="/briefing/{{ briefing.date.isoformat() }}/audio.mp3?v={{ listen.version }}"></audio>
       <div class="listen__speed" role="group" aria-label="Playback speed">
         <button type="button" data-rate="1" aria-pressed="true">1×</button>
         <button type="button" data-rate="1.25" aria-pressed="false">1.25×</button>
         <button type="button" data-rate="1.5" aria-pressed="false">1.5×</button>
       </div>
       <p class="listen__note">Read by {{ listen.audio.voice_name }} · {{ listen.minutes }} min · made {{ listen.audio.created_at.astimezone(zone).strftime("%H:%M") }}</p>
+      {% if listen.reason %}<p class="listen__note" role="status">{{ listen.reason }}</p>{% endif %}
       {% else %}
       <p class="listen__note" role="status">{{ listen.reason }}</p>
       {% endif %}

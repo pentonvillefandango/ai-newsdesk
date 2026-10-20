@@ -59,6 +59,17 @@ FIELDS = (
 )
 SAMPLE_MAX_BYTES = 2 * 1024 * 1024
 SAMPLE_TIMEOUT_S = 15.0
+# Google's bucket labels some previews text/plain (Lily, Matilda: feedback-4); those, and bare
+# bytes, are served as MP3 only when they start like one (an ID3 tag or an MPEG frame sync).
+SNIFFED_TYPES = ("text/plain", "application/octet-stream", "binary/octet-stream")
+
+
+def _looks_like_mp3(head: bytes) -> bool:
+    return head.startswith(b"ID3") or (
+        len(head) >= 2 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0
+    )
+
+
 QUOTA_TTL = timedelta(minutes=10)
 
 
@@ -351,7 +362,7 @@ async def voice_sample(request: Request, voice_id: str) -> Response:
                 length = resp.headers.get("content-length", "")
                 if (
                     resp.status_code != 200
-                    or not kind.startswith("audio/")
+                    or not (kind.startswith("audio/") or kind in SNIFFED_TYPES)
                     or (length.isdigit() and int(length) > SAMPLE_MAX_BYTES)
                 ):
                     raise HTTPException(status_code=502, detail="The sample could not be loaded.")
@@ -366,6 +377,10 @@ async def voice_sample(request: Request, voice_id: str) -> Response:
     except httpx.HTTPError as exc:  # never echo the error: it may carry the URL or key
         log.warning("voice sample fetch failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=502, detail="The sample could not be loaded.") from None
+    if not kind.startswith("audio/"):
+        if not _looks_like_mp3(bytes(body[:3])):
+            raise HTTPException(status_code=502, detail="The sample could not be loaded.")
+        kind = "audio/mpeg"
     return Response(
         bytes(body),
         media_type=kind,

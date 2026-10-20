@@ -475,6 +475,35 @@ class NarrationOutcome(StrEnum):
     BUSY = "busy"  # for callers that find the lock held; run_narration never returns it
 
 
+COUNTER_SETTLE_S = 5.0  # between the two readings of ElevenLabs' counter after a narration
+
+
+async def _quota_count(narrator: Narrator) -> int | None:
+    try:
+        quota = await narrator.quota()
+    except Exception:  # a free lookup: never let it stop the audio
+        return None
+    return quota.character_count if quota is not None else None
+
+
+async def _settled_count(narrator: Narrator) -> int | None:
+    """The counter after a narration, once two readings COUNTER_SETTLE_S apart agree; None while
+    it is still moving (a lagging counter must never make the meter under-count)."""
+    first = await _quota_count(narrator)
+    await asyncio.sleep(COUNTER_SETTLE_S)
+    second = await _quota_count(narrator)
+    return second if first is not None and first == second else None
+
+
+def _counted(before: int | None, after: int | None, estimate: int) -> int:
+    """What ElevenLabs counted (its counter before and after), when that reading is sound; else
+    our estimate, which never under-counts. Live it counted 2,377 of 5,402 sent (feedback-4)."""
+    if before is None or after is None:
+        return estimate
+    used = after - before
+    return used if 0 < used <= estimate else estimate
+
+
 async def run_narration(ctx: PipelineContext, day: date) -> NarrationOutcome:
     """Make (or remake) `day`'s briefing audio. The caller holds the scheduler lock.
 
@@ -505,6 +534,7 @@ async def run_narration(ctx: PipelineContext, day: date) -> NarrationOutcome:
             estimate,
         )
         return NarrationOutcome.OVER_CAP
+    before = await _quota_count(narrator)
     try:
         result = await narrator.narrate(
             chunks(text),
@@ -517,13 +547,18 @@ async def run_narration(ctx: PipelineContext, day: date) -> NarrationOutcome:
             ctx.clock.now(), day, rs.narration_model, estimate, ok=False
         )
         raise
-    if result.characters_billed:
+    billed = result.characters_billed
+    if result.audio is not None and billed and before is not None:
+        try:
+            billed = _counted(before, await _settled_count(narrator), billed)
+        except asyncio.CancelledError:  # billed already: keep the estimate
+            await ctx.store.record_tts_usage(
+                ctx.clock.now(), day, rs.narration_model, billed, ok=False
+            )
+            raise
+    if billed:
         await ctx.store.record_tts_usage(
-            ctx.clock.now(),
-            day,
-            rs.narration_model,
-            result.characters_billed,
-            ok=result.audio is not None,
+            ctx.clock.now(), day, rs.narration_model, billed, ok=result.audio is not None
         )
     if result.audio is None:
         if result.error == NO_NARRATION_KEY:
@@ -546,7 +581,7 @@ async def run_narration(ctx: PipelineContext, day: date) -> NarrationOutcome:
                 else fallback_voice_name(rs.narration_voice_id)
             ),
             model_id=rs.narration_model,
-            characters=result.characters_billed,
+            characters=billed,
             bytes=len(result.audio),
             file=name,
             created_at=ctx.clock.now(),
