@@ -315,3 +315,39 @@ async def test_raising_key_resolver_gives_error() -> None:
     n, seen = _make(lambda r: httpx.Response(200), key=boom)
     res = await _narrate(n, ["a"])
     assert res.error and KEY not in res.error and not seen
+
+
+def _read_timeout(req: httpx.Request) -> float | None:
+    return req.extensions["timeout"]["read"]
+
+
+async def test_gets_use_the_short_timeout_and_narrate_the_long_one() -> None:
+    """The free GETs (voices, models, quota) are awaited inline by Settings pages: they must
+    not wait 180 s. Only narration keeps the long timeout."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/v2/voices":
+            return httpx.Response(200, json={"voices": [], "has_more": False})
+        if req.url.path == "/v1/models":
+            return httpx.Response(200, json=[])
+        if req.url.path == "/v1/user/subscription":
+            return httpx.Response(
+                200, json={"tier": "creator", "character_count": 0, "character_limit": 1}
+            )
+        return httpx.Response(200, content=b"ID3a")
+
+    n, seen = _make(handler)
+    await n.voices()
+    await n.model_factors()
+    await n.quota()
+    await _narrate(n, ["hello"])
+    assert [(r.method, _read_timeout(r)) for r in seen] == [
+        ("GET", 15.0),
+        ("GET", 15.0),
+        ("GET", 15.0),
+        ("POST", 180.0),
+    ]
+    seen.clear()
+    custom = ElevenLabsNarrator(n._http, _key, get_timeout_s=2.5)
+    assert await custom.quota() is not None
+    assert [_read_timeout(r) for r in seen] == [2.5]

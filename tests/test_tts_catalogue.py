@@ -65,12 +65,17 @@ async def test_a_failed_refresh_keeps_the_old_copy(store: Store, which: str) -> 
     assert CatalogueData.model_validate(await store.get_setting(SETTING_KEY)) == before
 
 
-async def test_factors_are_clamped_and_non_finite_ones_become_one(store: Store) -> None:
-    factors = {"huge": 1e308, "neg": -2.0, "nan": math.nan, "inf": math.inf, "ok": 0.3}
+async def test_factors_are_clamped_and_non_finite_or_non_positive_ones_become_one(
+    store: Store,
+) -> None:
+    factors = {
+        "huge": 1e308, "neg": -2.0, "zero": 0.0, "nan": math.nan, "inf": math.inf, "ok": 0.3,
+    }  # fmt: skip
     cat = ElevenLabsCatalogue(store, _narrator(factors=factors))
     assert await cat.refresh() is True
     assert cat.factor("huge") == 10.0
-    assert cat.factor("neg") == 0.0
+    assert cat.factor("neg") == 1.0  # a 0 or negative factor would record nothing
+    assert cat.factor("zero") == 1.0
     assert cat.factor("nan") == 1.0
     assert cat.factor("inf") == 1.0
     assert cat.factor("ok") == 0.3

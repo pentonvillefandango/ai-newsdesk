@@ -27,9 +27,10 @@ MAX_FACTOR = 10.0
 
 
 def clamp_factor(value: float) -> float:
-    if not math.isfinite(value):
+    """Non-finite or non-positive factors count as 1.0 (a 0 would record nothing); cap 10."""
+    if not math.isfinite(value) or value <= 0:
         return 1.0
-    return min(MAX_FACTOR, max(0.0, value))
+    return min(MAX_FACTOR, value)
 
 
 class CatalogueData(BaseModel):

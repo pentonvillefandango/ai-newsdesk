@@ -80,7 +80,7 @@ The plan (`docs/plans/2026-10-20-briefing-audio.md`, Task 4) gives the exact fie
 - **`ElevenLabsNarrator(http, key_resolver)`** (`src/ai_newsdesk/tts/elevenlabs.py`).
   - **Requests.** `POST https://api.elevenlabs.io/v1/text-to-speech/{voice_id}?output_format=mp3_44100_64`, with headers `xi-api-key` and `Accept: audio/mpeg`, and the JSON body `{text, model_id}`.
   - **Multiple chunks.** Each chunk after the first passes `previous_request_ids` (the `request-id` response header of the previous chunk, up to 3) for seamless joins. If the header is missing, `previous_text` (the last 500 characters of the previous chunk) is sent instead. The MP3 bytes are concatenated.
-  - **Timeouts and retries.** 180 s per request, and no retries inside a call: the scheduler retries.
+  - **Timeouts and retries.** 180 s per narration request (15 s for the free GETs: voices, models, quota), and no retries inside a call: the scheduler retries.
   - **Billing outcomes.**
     - A 4xx response means nothing was billed.
     - A timeout, a dropped connection or a 5xx means `maybe_billed=True`, so the characters count.

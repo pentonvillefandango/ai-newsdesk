@@ -45,11 +45,13 @@ class ElevenLabsNarrator:
         *,
         base_url: str = "https://api.elevenlabs.io",
         timeout_s: float = 180.0,
+        get_timeout_s: float = 15.0,
     ) -> None:
         self._http = http
         self._key = key
         self._base = base_url.rstrip("/")
-        self._timeout = timeout_s
+        self._timeout = timeout_s  # narration only
+        self._get_timeout = get_timeout_s  # the free GETs, awaited inline by Settings pages
 
     def __repr__(self) -> str:
         return f"ElevenLabsNarrator(base_url={self._base!r})"
@@ -129,7 +131,7 @@ class ElevenLabsNarrator:
                 f"{self._base}{path}",
                 params=params,
                 headers={"xi-api-key": key},
-                timeout=self._timeout,
+                timeout=self._get_timeout,
                 follow_redirects=False,
             )
             if not resp.is_success:

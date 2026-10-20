@@ -505,12 +505,18 @@ async def run_narration(ctx: PipelineContext, day: date) -> NarrationOutcome:
             estimate,
         )
         return NarrationOutcome.OVER_CAP
-    result = await narrator.narrate(
-        chunks(text),
-        voice_id=rs.narration_voice_id,
-        model_id=rs.narration_model,
-        credit_factor=factor,
-    )
+    try:
+        result = await narrator.narrate(
+            chunks(text),
+            voice_id=rs.narration_voice_id,
+            model_id=rs.narration_model,
+            credit_factor=factor,
+        )
+    except asyncio.CancelledError:  # shutdown mid-request: it may still be billed
+        await ctx.store.record_tts_usage(
+            ctx.clock.now(), day, rs.narration_model, estimate, ok=False
+        )
+        raise
     if result.characters_billed:
         await ctx.store.record_tts_usage(
             ctx.clock.now(),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import date
@@ -276,3 +277,21 @@ async def test_prune_without_an_audio_directory_is_a_no_op(
     assert await prune_audio(ctx) == 0
     ctx.audio = None
     assert await prune_audio(ctx) == 0
+
+
+async def test_a_cancelled_narration_records_the_estimate_and_re_raises(
+    store: Store, clock: FixedClock, tmp_path: Path
+) -> None:
+    """Shutdown mid-request: ElevenLabs may still bill, so the pre-check estimate is recorded
+    (never under-count) and the cancellation propagates."""
+    await _brief(store, clock)
+
+    async def cancelled() -> None:
+        raise asyncio.CancelledError
+
+    ctx = _ctx(store, clock, tmp_path, FakeNarrator(during=cancelled))
+    with pytest.raises(asyncio.CancelledError):
+        await run_narration(ctx, DAY)
+    size = len(speech_text(BODY, briefing_date_label(DAY)))
+    assert await _usage(store) == [("eleven_v4", size, 0)]
+    assert await store.get_briefing_audio(DAY) is None
