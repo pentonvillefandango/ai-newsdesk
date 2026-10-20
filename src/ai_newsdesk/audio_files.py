@@ -11,6 +11,7 @@ import secrets
 from pathlib import Path
 
 NAME_RE = re.compile(r"^briefing-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}\.mp3$")
+TEMP_RE = re.compile(r"^briefing-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}\.mp3\.tmp$")
 
 
 class AudioFiles:
@@ -42,3 +43,15 @@ class AudioFiles:
         if not self._dir.is_dir():
             return set()
         return {p.name for p in self._dir.iterdir() if NAME_RE.fullmatch(p.name)}
+
+    def delete_temps_before(self, cutoff: float) -> int:
+        """Delete temp files a crash left between write and rename, last modified before
+        `cutoff` (a POSIX timestamp). Only `write()`'s own temp names are touched."""
+        if not self._dir.is_dir():
+            return 0
+        removed = 0
+        for p in self._dir.iterdir():
+            if TEMP_RE.fullmatch(p.name) and p.stat().st_mtime < cutoff:
+                p.unlink(missing_ok=True)
+                removed += 1
+        return removed

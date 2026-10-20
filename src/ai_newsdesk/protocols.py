@@ -83,6 +83,10 @@ class Consolidator(Protocol):
     ) -> tuple[list[list[int]], list[Usage]]: ...
 
 
+# The error a Narrator returns when no key resolves (no request is sent, nothing is billed).
+NO_NARRATION_KEY = "No ElevenLabs key."
+
+
 class Narrator(Protocol):
     # never raises
     async def narrate(

@@ -18,11 +18,12 @@ import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ai_newsdesk.models import NarrationResult, QuotaInfo, VoiceInfo
+from ai_newsdesk.protocols import NO_NARRATION_KEY
 
 log = logging.getLogger(__name__)
 
 _VOICE_ID = re.compile(r"^[A-Za-z0-9]{1,64}$")
-_NO_KEY = "No ElevenLabs key."
+_NO_KEY = NO_NARRATION_KEY
 
 
 class _Lenient(BaseModel):

@@ -1,0 +1,104 @@
+"""The ElevenLabs catalogue: the account's voices and each model's credit factor, cached in the
+settings table under `elevenlabs_catalogue` (feedback-3).
+
+A refresh needs both lists; when either call fails the last good copy stays. Without a copy a
+voice is named by its id and every factor is 1.0, which never under-counts. Factors from the
+API are clamped to [0.0, 10.0] (non-finite ones become 1.0), so a wild value can never overflow
+the billing arithmetic.
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+from datetime import datetime, timedelta
+
+from pydantic import BaseModel, ValidationError, field_validator
+
+from ai_newsdesk.models import VoiceInfo
+from ai_newsdesk.protocols import Narrator
+from ai_newsdesk.store.store import Store
+
+log = logging.getLogger(__name__)
+
+SETTING_KEY = "elevenlabs_catalogue"
+STALE_AFTER = timedelta(hours=24)
+MAX_FACTOR = 10.0
+
+
+def clamp_factor(value: float) -> float:
+    if not math.isfinite(value):
+        return 1.0
+    return min(MAX_FACTOR, max(0.0, value))
+
+
+class CatalogueData(BaseModel):
+    fetched_at: datetime
+    voices: list[VoiceInfo]
+    model_factors: dict[str, float]
+
+    @field_validator("model_factors")
+    @classmethod
+    def _clamp(cls, value: dict[str, float]) -> dict[str, float]:
+        return {k: clamp_factor(v) for k, v in value.items()}
+
+
+class ElevenLabsCatalogue:
+    def __init__(self, store: Store, narrator: Narrator) -> None:
+        self.store = store
+        self.narrator = narrator
+        self._data: CatalogueData | None = None
+
+    async def load(self) -> CatalogueData | None:
+        """Read the stored copy into memory (a corrupt one is ignored)."""
+        raw = await self.store.get_setting(SETTING_KEY)
+        if raw is None:
+            return None
+        try:
+            self._data = CatalogueData.model_validate(raw)
+        except ValidationError:
+            log.warning("stored ElevenLabs catalogue is unreadable; ignored")
+            return None
+        return self._data
+
+    def cached(self) -> CatalogueData | None:
+        return self._data
+
+    def is_stale(self) -> bool:
+        data = self._data
+        return data is None or self.store.clock.now() - data.fetched_at > STALE_AFTER
+
+    async def refresh(self) -> bool:
+        """Fetch both lists and store them. Never raises: on failure the old copy stays."""
+        try:
+            voices = await self.narrator.voices()
+            factors = await self.narrator.model_factors()
+            if voices is None or factors is None:
+                raise ValueError("no answer")
+            data = CatalogueData(
+                fetched_at=self.store.clock.now(), voices=voices, model_factors=factors
+            )
+            await self.store.set_setting(SETTING_KEY, data.model_dump(mode="json"))
+        except Exception as exc:  # failures are local: keep what we had
+            log.warning(
+                "ElevenLabs catalogue refresh failed (%s); kept the last good copy",
+                type(exc).__name__,
+            )
+            return False
+        self._data = data
+        log.info("ElevenLabs catalogue refreshed: %d voices", len(voices))
+        return True
+
+    def voice_name(self, voice_id: str) -> str:
+        data = self._data
+        if data is not None:
+            for voice in data.voices:
+                if voice.voice_id == voice_id:
+                    return voice.name
+        return voice_id
+
+    def factor(self, model_id: str) -> float:
+        data = self._data
+        if data is None:
+            return 1.0
+        return data.model_factors.get(model_id, 1.0)
