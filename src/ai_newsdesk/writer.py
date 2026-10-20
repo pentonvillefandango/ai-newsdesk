@@ -14,6 +14,9 @@ log = logging.getLogger(__name__)
 
 MAX_TEXT_CHARS = 6000
 DATE_LABEL_ALLOWANCE = "Wednesday 30 September 2026"
+# The briefing runs at medium effort, and thinking counts against max_tokens: at 4000 Haiku
+# often thought for half of it and the JSON was cut off. Only used tokens are billed.
+BRIEFING_MAX_TOKENS = 16000
 
 WRITER_SYSTEM = (
     "You write short, plain summaries for a personal AI news feed.\n"
@@ -71,7 +74,7 @@ class LLMWriter:
         *,
         batch_size: int = 10,
         max_tokens: int = 4000,
-        briefing_max_tokens: int = 4000,
+        briefing_max_tokens: int = BRIEFING_MAX_TOKENS,
     ) -> None:
         self.client = client
         self.briefing_client = briefing_client
