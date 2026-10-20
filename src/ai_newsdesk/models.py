@@ -242,3 +242,31 @@ class UsageStats(BaseModel):
     review_tokens: TokenTotals = Field(default_factory=TokenTotals)
     write_tokens: TokenTotals = Field(default_factory=TokenTotals)
     briefing_tokens: TokenTotals = Field(default_factory=TokenTotals)
+
+
+class NarrationResult(BaseModel):
+    audio: bytes | None = None
+    characters_billed: int = 0  # characters sent x the model's credit factor, rounded up
+    maybe_billed: bool = False  # True when the outcome is unknown or chunks succeeded
+    error: str | None = None  # short, scrubbed
+
+
+class VoiceInfo(BaseModel):
+    voice_id: str
+    name: str
+    category: str | None = None
+    labels: dict[str, str] = Field(default_factory=dict[str, str])
+    preview_url: str | None = None
+
+
+class QuotaInfo(BaseModel):
+    tier: str
+    character_count: int
+    character_limit: int
+    resets_at: datetime | None = None
+
+
+class TtsModelInfo(BaseModel):
+    model_id: str
+    credit_factor: float = 1.0
+    max_chars: int | None = None

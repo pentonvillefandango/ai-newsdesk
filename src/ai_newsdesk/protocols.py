@@ -7,6 +7,8 @@ from ai_newsdesk.models import (
     BriefingStory,
     ConsolidationStory,
     JudgeResult,
+    NarrationResult,
+    QuotaInfo,
     ReviewInput,
     SearchHit,
     SourceConfig,
@@ -14,6 +16,7 @@ from ai_newsdesk.models import (
     SourceResult,
     StoryText,
     Usage,
+    VoiceInfo,
     WriteInput,
 )
 
@@ -78,3 +81,16 @@ class Consolidator(Protocol):
     async def find_groups(
         self, stories: list[ConsolidationStory]
     ) -> tuple[list[list[int]], list[Usage]]: ...
+
+
+class Narrator(Protocol):
+    # never raises
+    async def narrate(
+        self, text_chunks: list[str], *, voice_id: str, model_id: str, credit_factor: float
+    ) -> NarrationResult: ...
+
+    async def voices(self) -> list[VoiceInfo] | None: ...  # None on failure
+
+    async def model_factors(self) -> dict[str, float] | None: ...  # TTS models only
+
+    async def quota(self) -> QuotaInfo | None: ...
